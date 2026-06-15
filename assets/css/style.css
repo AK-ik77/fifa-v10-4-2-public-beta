@@ -314,6 +314,7 @@ tr:last-child td { border-bottom: 0; }
   .vs { display: none; }
 }
 
+
 /* V10.4.2 enhanced responsive brand/layout patch */
 .brand-block {
   display: flex;
