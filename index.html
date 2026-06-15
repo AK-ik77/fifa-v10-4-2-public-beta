@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="2026FIFA世界杯预测 V10.4.2 公测版：赛程、预测、赛果、命中统计。" />
+  <title>2026FIFA世界杯预测</title>
+  <link rel="stylesheet" href="assets/css/style.css" />
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <header class="site-header">
+      <div>
+        <div class="eyebrow">Public Beta · V10.4.2 公测版</div>
+        <h1>2026FIFA世界杯预测</h1>
+        <p class="subhead">免费数据源 + Elo/比分先验 + 赛后结果回填兼容。预测结果自动读取，不允许人工改写。</p>
+      </div>
+      <div class="header-actions">
+        <button id="refreshBtn" class="btn primary" type="button">刷新数据</button>
+        <button id="clearCacheBtn" class="btn ghost" type="button">清理缓存</button>
+      </div>
+    </header>
+
+    <nav class="tabs" aria-label="主导航">
+      <button class="tab active" data-tab="home" type="button">首页</button>
+      <button class="tab" data-tab="schedule" type="button">全部赛程</button>
+      <button class="tab" data-tab="stats" type="button">命中统计</button>
+      <button class="tab" data-tab="backtest" type="button">历史回测</button>
+      <button class="tab" data-tab="data" type="button">V10数据层</button>
+    </nav>
+
+    <main>
+      <section id="statusBar" class="status-bar" aria-live="polite">正在初始化...</section>
+
+      <section id="homeView" class="view active"></section>
+      <section id="scheduleView" class="view"></section>
+      <section id="statsView" class="view"></section>
+      <section id="backtestView" class="view"></section>
+      <section id="dataView" class="view"></section>
+    </main>
+
+    <footer class="site-footer">
+      <span>V10.4.2 公测版</span>
+      <span>Netlify 静态部署</span>
+      <span>Supabase anon key 只读</span>
+    </footer>
+  </div>
+
+  <script src="assets/js/config.js"></script>
+  <script src="assets/js/app.js"></script>
+</body>
+</html>
