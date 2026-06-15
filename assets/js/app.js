@@ -3,14 +3,14 @@
 
   const CONFIG = window.FIFA_CONFIG || {};
   const VERSION = CONFIG.VERSION || 'V10.4.2 公测版';
-  const CACHE_KEY = 'fifa_world_cup_predictor_v10_4_2_enhanced_matches_cache';
-  const CACHE_TIME_KEY = 'fifa_world_cup_predictor_v10_4_2_enhanced_matches_cache_time';
+  const CACHE_KEY = 'fifa_world_cup_predictor_v10_4_2_stable_today_beijing_cache_v2';
+  const CACHE_TIME_KEY = 'fifa_world_cup_predictor_v10_4_2_stable_today_beijing_cache_time_v2';
 
   const state = {
     matches: [],
     source: 'init',
     loading: false,
-    activeTab: 'home',
+    activeTab: 'today',
     search: '',
     date: 'all',
     status: 'all',
@@ -24,7 +24,6 @@
   const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
   const views = {
-    home: $('#homeView'),
     today: $('#todayView'),
     schedule: $('#scheduleView'),
     stats: $('#statsView'),
@@ -326,15 +325,68 @@
     return null;
   }
 
+  function collectDateCandidates(value, out = [], depth = 0, path = '') {
+    if (value === null || value === undefined || depth > 6) return out;
+    const lowerPath = String(path).toLowerCase();
+    const pathLooksLikeTime = /beijing|bj|bjt|utc|time|date|kickoff|start|fixture|schedule|match/.test(lowerPath);
+    if (value instanceof Date || typeof value === 'number') {
+      out.push({ value, score: pathLooksLikeTime ? 40 : 5 });
+      return out;
+    }
+    if (typeof value === 'string') {
+      const text = value.trim();
+      if (!text) return out;
+      const hasDate = /(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}|\d{1,2}[/-]\d{1,2}|\d{1,2}月\d{1,2})/.test(text);
+      const hasTime = /\d{1,2}:\d{2}/.test(text);
+      const hasTimeWord = /北京时间|北京|BJT|UTC|GMT|当地时间|local|kickoff|开球|比赛时间/i.test(text);
+      if ((hasDate && hasTime) || (hasDate && pathLooksLikeTime) || hasTimeWord) {
+        let score = 0;
+        if (/北京时间|北京|BJT/i.test(text) || /beijing|bj|bjt/.test(lowerPath)) score += 100;
+        if (/UTC|GMT|utc/.test(text) || /utc/.test(lowerPath)) score += 70;
+        if (/local|当地时间|localtime/.test(text + lowerPath)) score += 45;
+        if (pathLooksLikeTime) score += 30;
+        if (hasDate && hasTime) score += 20;
+        out.push({ value: text, score });
+      }
+      return out;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => collectDateCandidates(item, out, depth + 1, `${path}.${index}`));
+      return out;
+    }
+    if (isPlainObject(value)) {
+      const entries = Object.entries(value);
+      entries.sort(([a], [b]) => {
+        const sa = /beijing|bj|bjt/.test(String(a).toLowerCase()) ? -3 : (/utc|time|date|kickoff|start/.test(String(a).toLowerCase()) ? -2 : 0);
+        const sb = /beijing|bj|bjt/.test(String(b).toLowerCase()) ? -3 : (/utc|time|date|kickoff|start/.test(String(b).toLowerCase()) ? -2 : 0);
+        return sa - sb;
+      });
+      entries.forEach(([key, val]) => collectDateCandidates(val, out, depth + 1, path ? `${path}.${key}` : key));
+    }
+    return out;
+  }
+
   function getKickoff(row) {
-    const raw = read(row, [
+    const priorityPaths = [
+      'beijingTime', 'beijing_time', 'beijingDateTime', 'beijing_datetime', 'kickoffBeijing', 'kickoff_beijing', 'bjTime', 'bj_time', 'bjt',
       'kickoff', 'kickoffAt', 'kickoff_at', 'startTime', 'start_time', 'startAt', 'start_at',
       'matchTime', 'match_time', 'matchDate', 'match_date', 'date', 'datetime', 'dateTime',
-      'utcDate', 'utc_date', 'utcTime', 'utc_time', 'localTime', 'local_time', 'beijingTime',
-      'beijing_time', 'beijingDateTime', 'beijing_datetime', 'kickoffBeijing', 'kickoff_beijing', 'bjTime', 'bj_time', 'time', 'timeText', 'matchTimeText', 'displayTime', 'fixture.date', 'fixture.timestamp',
+      'utcDate', 'utc_date', 'utcTime', 'utc_time', 'localTime', 'local_time', 'time', 'timeText', 'matchTimeText', 'displayTime',
+      'fixture.date', 'fixture.timestamp', 'fixture.kickoff', 'fixture.time',
       'schedule.kickoff', 'schedule.date', 'schedule.time', 'schedule.beijingTime', 'eventDate', 'event_time'
-    ], '');
-    return parseDateValue(raw);
+    ];
+    for (const path of priorityPaths) {
+      const raw = read(row, [path], '');
+      const parsed = parseDateValue(raw);
+      if (parsed) return parsed;
+    }
+
+    const scanned = collectDateCandidates(row).sort((a, b) => b.score - a.score);
+    for (const item of scanned) {
+      const parsed = parseDateValue(item.value);
+      if (parsed) return parsed;
+    }
+    return null;
   }
 
   function localDateKey(date) {
@@ -800,7 +852,7 @@
 
       <section class="panel data-layer-home">
         <h2>V10 数据层状态</h2>
-        <p class="muted">该板块已放到首页下方，避免抢占主内容。它只做诊断展示，不做人工编辑。</p>
+        <p class="muted">该板块仅做诊断展示，不做人工编辑。</p>
         ${renderDataDiagnostics(false)}
       </section>
     `;
@@ -1051,7 +1103,6 @@
   }
 
   function renderAll() {
-    renderHome();
     renderTodayView();
     renderSchedule();
     renderStats();
@@ -1071,7 +1122,7 @@
   function setActiveTab(tab) {
     state.activeTab = tab;
     $$('.tab').forEach((button) => button.classList.toggle('active', button.dataset.tab === tab));
-    Object.entries(views).forEach(([key, el]) => el.classList.toggle('active', key === tab));
+    Object.entries(views).forEach(([key, el]) => { if (el) el.classList.toggle('active', key === tab); });
   }
 
   function getCachedMatches() {
