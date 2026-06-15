@@ -75,6 +75,70 @@
       .replaceAll("'", '&#039;');
   }
 
+  function isPlainObject(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  function scalarText(value, fallback = '') {
+    if (value === null || value === undefined) return fallback;
+    if (typeof value === 'string') return value.trim() || fallback;
+    if (typeof value === 'number') return Number.isFinite(value) ? String(value) : fallback;
+    if (typeof value === 'boolean') return value ? '是' : '否';
+    return fallback;
+  }
+
+  function compactText(value, fallback = '暂无', depth = 0) {
+    if (value === null || value === undefined) return fallback;
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      return scalarText(value, fallback);
+    }
+    if (Array.isArray(value)) {
+      const parts = value.map((item) => compactText(item, '', depth + 1)).filter(Boolean);
+      return parts.length ? Array.from(new Set(parts)).join(' / ') : fallback;
+    }
+    if (isPlainObject(value)) {
+      const priorityKeys = [
+        'text', 'label', 'name', 'title', 'summary', 'display', 'zh', 'cn', 'value',
+        'direction', 'pick', 'resultPick', 'winnerPick', 'modelPick', 'recommend', 'recommendation',
+        'advice', 'suggestion', 'primary', 'main', 'choice', 'result', 'level', 'risk', 'riskLevel'
+      ];
+      const parts = [];
+      priorityKeys.forEach((key) => {
+        if (Object.prototype.hasOwnProperty.call(value, key)) {
+          const part = compactText(value[key], '', depth + 1);
+          if (part && !/^\[object Object\]$/i.test(part)) parts.push(part);
+        }
+      });
+      if (!parts.length && depth < 2) {
+        Object.entries(value).forEach(([key, val]) => {
+          if (['id', 'key', 'code', 'raw', 'data'].includes(key)) return;
+          const part = compactText(val, '', depth + 1);
+          if (part && !/^\[object Object\]$/i.test(part)) parts.push(part);
+        });
+      }
+      return parts.length ? Array.from(new Set(parts)).slice(0, 4).join(' / ') : fallback;
+    }
+    return fallback;
+  }
+
+  function firstReadable(row, paths, fallback = '') {
+    const value = read(row, paths, null);
+    const text = compactText(value, '', 0);
+    return text || fallback;
+  }
+
+  function percentText(value) {
+    if (value === null || value === undefined || value === '') return '';
+    const text = compactText(value, '', 0);
+    if (!text) return '';
+    const numeric = Number(String(text).replace('%', '').trim());
+    if (Number.isFinite(numeric)) {
+      const pct = numeric > 1 ? numeric : numeric * 100;
+      return `${Math.round(pct)}%`;
+    }
+    return text;
+  }
+
   function normalizeScoreString(value) {
     if (value === null || value === undefined) return null;
     const text = String(value)
@@ -223,15 +287,27 @@
   }
 
   function getRisk(row) {
-    return String(read(row, ['risk', 'riskLevel', 'upsetRisk', 'risk_score_label'], '中'));
+    const raw = read(row, ['risk', 'riskLevel', 'upsetRisk', 'risk_score_label', 'riskScoreLabel', 'modelRisk'], '中');
+    if (typeof raw === 'number') {
+      if (raw >= 67) return '高';
+      if (raw <= 33) return '低';
+      return '中';
+    }
+    const text = compactText(raw, '中');
+    const numeric = Number(String(text).replace(/[^0-9.]/g, ''));
+    if (/高|high|danger/i.test(text)) return text;
+    if (/低|low|safe/i.test(text)) return text;
+    if (Number.isFinite(numeric) && numeric > 0) {
+      if (numeric >= 67) return `高 ${Math.round(numeric)}/100`;
+      if (numeric <= 33) return `低 ${Math.round(numeric)}/100`;
+      return `中 ${Math.round(numeric)}/100`;
+    }
+    return text || '中';
   }
 
   function getConfidence(row) {
-    const value = read(row, ['confidence', 'modelConfidence', 'favoriteProb', 'winConfidence'], '');
-    if (value === '') return '';
-    const num = Number(value);
-    if (Number.isFinite(num)) return num > 1 ? `${Math.round(num)}%` : `${Math.round(num * 100)}%`;
-    return String(value);
+    const value = read(row, ['confidence', 'modelConfidence', 'favoriteProb', 'winConfidence', 'confidenceText'], '');
+    return percentText(value);
   }
 
   function flattenScores(input, output = []) {
@@ -291,9 +367,45 @@
   }
 
   function recommendation(row) {
-    return String(read(row, [
-      'recommendation', 'recommend', 'direction', 'pick', 'winnerPick', 'modelPick', 'advice', 'resultPick'
-    ], '暂无'));
+    const text = firstReadable(row, [
+      'recommendation', 'recommend', 'direction', 'pick', 'winnerPick', 'modelPick', 'advice',
+      'resultPick', 'prediction.recommendation', 'model.recommendation', 'summary.recommendation'
+    ], '暂无');
+    return /^\[object Object\]$/i.test(text) ? '暂无' : text;
+  }
+
+  function probabilitySummary(row) {
+    const home = percentText(read(row, ['homeWinProb', 'homeProb', 'probHome', 'probabilities.home', 'probabilities.homeWin', 'winProb.home', 'resultProb.home'], ''));
+    const draw = percentText(read(row, ['drawProb', 'probDraw', 'probabilities.draw', 'winProb.draw', 'resultProb.draw'], ''));
+    const away = percentText(read(row, ['awayWinProb', 'awayProb', 'probAway', 'probabilities.away', 'probabilities.awayWin', 'winProb.away', 'resultProb.away'], ''));
+    const parts = [];
+    if (home) parts.push(`主胜 ${home}`);
+    if (draw) parts.push(`平局 ${draw}`);
+    if (away) parts.push(`客胜 ${away}`);
+    return parts.join(' / ');
+  }
+
+  function modelSummary(row) {
+    const parts = [];
+    const elo = compactText(read(row, ['eloDiff', 'elo_diff', 'elo.delta', 'model.eloDiff'], ''), '');
+    const lambdaHome = compactText(read(row, ['lambdaHome', 'lambda_home', 'xgHome', 'expectedGoals.home', 'model.lambdaHome'], ''), '');
+    const lambdaAway = compactText(read(row, ['lambdaAway', 'lambda_away', 'xgAway', 'expectedGoals.away', 'model.lambdaAway'], ''), '');
+    const lowScore = percentText(read(row, ['lowScoreVolatility', 'low_score_volatility', 'under25Prob', 'under2_5', 'model.lowScoreVolatility'], ''));
+    const drawPressure = percentText(read(row, ['drawPressure', 'draw_pressure', 'model.drawPressure'], ''));
+    const underdog = percentText(read(row, ['underdogProb', 'underdog_prob', 'model.underdogProb'], ''));
+    if (elo) parts.push(`Elo差 ${elo}`);
+    if (lambdaHome || lambdaAway) parts.push(`λ ${lambdaHome || '-'} / ${lambdaAway || '-'}`);
+    if (drawPressure) parts.push(`平局压力 ${drawPressure}`);
+    if (underdog) parts.push(`弱势方 ${underdog}`);
+    if (lowScore) parts.push(`小比分 ${lowScore}`);
+    return parts.join(' · ');
+  }
+
+  function learningSummary(row) {
+    return firstReadable(row, [
+      'learningInsight', 'learningInsights', 'learning', 'v10Learning', 'v104Learning',
+      'selfLearning', 'modelLearning', 'sampleLearning', 'analysis.learningInsight'
+    ], '');
   }
 
   function resultDirectionFromScore(score) {
@@ -376,6 +488,9 @@
     const scores = predictionScores(row);
     const kickoff = getKickoff(row);
     const confidence = getConfidence(row);
+    const probs = probabilitySummary(row);
+    const model = modelSummary(row);
+    const learning = learningSummary(row);
     return `
       <article class="match-card ${compact ? 'compact' : ''}">
         <div class="match-top">
@@ -398,6 +513,9 @@
           <span class="muted">赛后比分</span>
           ${actual ? `<span class="score-tag actual">${htmlEscape(actual.finalScore)}</span><span class="muted">来源：${htmlEscape(actual.source)}</span>` : '<span class="muted">未同步</span>'}
         </div>
+        ${probs ? `<div class="score-line"><span class="muted">胜平负概率</span><span class="badge">${htmlEscape(probs)}</span></div>` : ''}
+        ${model ? `<div class="score-line"><span class="muted">模型参数</span><span class="badge">${htmlEscape(model)}</span></div>` : ''}
+        ${learning ? `<div class="score-line"><span class="muted">学习解释</span><span class="badge">${htmlEscape(learning)}</span></div>` : ''}
         <div class="badge-line">
           <span class="badge">推荐：${htmlEscape(recommendation(row))}</span>
           ${riskBadge(row)}
