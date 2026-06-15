@@ -450,13 +450,21 @@
     return keys.map((key) => `<option value="${htmlEscape(key)}">${key === 'unknown' ? '时间待定' : htmlEscape(key)}</option>`).join('');
   }
 
-  function renderSchedule() {
+  function renderScheduleList() {
     const rows = filteredMatches().sort((a, b) => sortOrder(a) - sortOrder(b));
+    const container = $('#scheduleCards');
+    if (!container) return;
+    container.innerHTML = rows.length
+      ? rows.map((row) => renderMatchCard(row, false)).join('')
+      : '<div class="empty">没有匹配的赛程。换一个关键词或日期。</div>';
+  }
+
+  function renderSchedule() {
     views.schedule.innerHTML = `
       <section class="panel filter-panel">
         <h2>全部赛程</h2>
         <div class="filters">
-          <input id="searchInput" class="input" type="search" placeholder="搜索球队、阶段、状态，例如：美国 / 小组赛 / 赛后" value="${htmlEscape(state.search)}" />
+          <input id="searchInput" class="input" type="search" placeholder="搜索球队、阶段、状态，例如：美国 / 小组赛 / 赛后" value="${htmlEscape(state.search)}" autocomplete="off" />
           <select id="dateSelect" class="select" aria-label="日期筛选">
             <option value="all">全部日期</option>
             ${dateOptions()}
@@ -470,25 +478,45 @@
         </div>
       </section>
       <section class="panel">
-        <div class="grid cards-2">
-          ${rows.length ? rows.map((row) => renderMatchCard(row, false)).join('') : '<div class="empty">没有匹配的赛程。换一个关键词或日期。</div>'}
-        </div>
+        <div id="scheduleCards" class="grid cards-2"></div>
       </section>
     `;
-    $('#dateSelect').value = state.date;
-    $('#statusSelect').value = state.status;
-    $('#searchInput').addEventListener('input', (event) => {
+
+    const searchInput = $('#searchInput');
+    const dateSelect = $('#dateSelect');
+    const statusSelect = $('#statusSelect');
+
+    dateSelect.value = state.date;
+    statusSelect.value = state.status;
+
+    let isComposing = false;
+
+    searchInput.addEventListener('compositionstart', () => {
+      isComposing = true;
+    });
+
+    searchInput.addEventListener('compositionend', (event) => {
+      isComposing = false;
       state.search = event.target.value;
-      renderSchedule();
+      renderScheduleList();
     });
-    $('#dateSelect').addEventListener('change', (event) => {
+
+    searchInput.addEventListener('input', (event) => {
+      state.search = event.target.value;
+      if (!isComposing) renderScheduleList();
+    });
+
+    dateSelect.addEventListener('change', (event) => {
       state.date = event.target.value;
-      renderSchedule();
+      renderScheduleList();
     });
-    $('#statusSelect').addEventListener('change', (event) => {
+
+    statusSelect.addEventListener('change', (event) => {
       state.status = event.target.value;
-      renderSchedule();
+      renderScheduleList();
     });
+
+    renderScheduleList();
   }
 
   function renderStats() {
