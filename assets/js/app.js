@@ -3,56 +3,73 @@
 
   const CONFIG = window.FIFA_CONFIG || {};
   const VERSION = CONFIG.VERSION || 'V10.4.2 公测版';
-  const CACHE_KEY = 'fifa_world_cup_predictor_v10_4_2_workers_layout_cache_v1';
-  const CACHE_TIME_KEY = 'fifa_world_cup_predictor_v10_4_2_workers_layout_cache_time_v1';
-  const BEIJING_TZ = 'Asia/Shanghai';
-  const MS_DAY = 86400000;
+  const CACHE_KEY = 'fifa_world_cup_predictor_v10_4_2_final_complete_cache_v1';
+  const CACHE_TIME_KEY = 'fifa_world_cup_predictor_v10_4_2_final_complete_cache_time_v1';
 
   const state = {
     matches: [],
     source: 'init',
-    activeMode: 'today',
+    loading: false,
+    activeTab: 'today',
     search: '',
     date: 'all',
     status: 'all',
     group: 'all',
-    error: null,
     lastLoadedAt: null,
-    loading: false
+    error: null,
+    dataPromise: null
   };
 
-  const $ = (s) => document.querySelector(s);
-  const $$ = (s) => Array.from(document.querySelectorAll(s));
+  const $ = (selector) => document.querySelector(selector);
+  const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
-  const els = {
-    statusBar: $('#statusBar'),
-    refreshBtn: $('#refreshBtn'),
-    clearCacheBtn: $('#clearCacheBtn'),
-    modeTitle: $('#modeTitle'),
-    todaySummary: $('#todaySummary'),
-    spotlightGrid: $('#spotlightGrid'),
-    dateStrip: $('#dateStrip'),
-    searchInput: $('#searchInput'),
-    dateFilter: $('#dateFilter'),
-    statusFilter: $('#statusFilter'),
-    groupFilter: $('#groupFilter'),
-    scheduleGrid: $('#scheduleGrid'),
-    riskList: $('#riskList'),
-    confidenceList: $('#confidenceList'),
-    riskCount: $('#riskCount'),
-    confidenceCount: $('#confidenceCount'),
-    metricsGrid: $('#metricsGrid'),
-    reviewList: $('#reviewList')
+  const views = {
+    today: $('#todayView'),
+    schedule: $('#scheduleView'),
+    recommend: $('#recommendView'),
+    combo: $('#comboView'),
+    stats: $('#statsView'),
+    backtest: $('#backtestView'),
+    data: $('#dataView')
   };
+
+  const statusBar = $('#statusBar');
 
   const demoMatches = [
-    { id: 620001, data: { homeCn: '墨西哥', awayCn: '南非', status: '完赛', stage: '小组赛', group: 'A组', kickoff: '2026-06-11T19:00:00Z', predictions: ['1:0','1:1','2:1'], recommendation: '主胜或平', risk: '中', confidence: 62, postMatchResult: { actualScore: '2:0' }, actualScore: '2:0' } },
-    { id: 620002, data: { homeCn: '韩国', awayCn: '捷克', status: '完赛', stage: '小组赛', group: 'A组', kickoff: '2026-06-12T02:00:00Z', topScores: ['1:1','2:1','0:0'], recommendation: '平局保护', risk: '高', confidence: 54, actualScore: '2:1' } },
-    { id: 620021, data: { homeCn: '美国', awayCn: '澳大利亚', status: '未开赛', stage: '小组赛', group: 'C组', kickoff: '2026-06-18T01:00:00Z', modelScores: ['2:1','1:1','1:0'], recommendation: '主队不败', risk: '中', confidence: 58 } },
-    { id: 620025, data: { homeCn: '德国', awayCn: '巴拉圭', status: '完赛', stage: '小组赛', group: 'D组', kickoff: '2026-06-19T19:00:00Z', primaryScores: ['2:0','2:1','1:0'], recommendation: '主胜', risk: '低', confidence: 71, finalScore: '7:1', homeScore: 7, awayScore: 1 } }
+    {
+      id: 620001,
+      data: {
+        homeCn: '墨西哥', awayCn: '南非', status: '完赛', stage: '小组赛', group: 'A组', kickoff: '2026-06-11T19:00:00Z',
+        predictions: ['1:0', '1:1', '2:1'], recommendation: '主胜或平', risk: '中', confidence: 62,
+        postMatchResult: { actualScore: '2:0' }, actualScore: '2:0'
+      }
+    },
+    {
+      id: 620002,
+      data: {
+        homeCn: '韩国', awayCn: '捷克', status: '完赛', stage: '小组赛', group: 'B组', kickoff: '2026-06-12T22:00:00Z',
+        topScores: ['1:1', '2:1', '0:0'], recommendation: '平局保护', risk: '高', confidence: 54,
+        actualScore: '2:1'
+      }
+    },
+    {
+      id: 620021,
+      data: {
+        homeCn: '美国', awayCn: '澳大利亚', status: '未开赛', stage: '小组赛', group: 'C组', kickoff: '2026-06-18T01:00:00Z',
+        modelScores: ['2:1', '1:1', '1:0'], recommendation: '主队不败', risk: '中', confidence: 58
+      }
+    },
+    {
+      id: 620025,
+      data: {
+        homeCn: '德国', awayCn: '巴拉圭', status: '完赛', stage: '小组赛', group: 'D组', kickoff: '2026-06-19T19:00:00Z',
+        primaryScores: ['2:0', '2:1', '1:0'], recommendation: '主胜', risk: '低', confidence: 71,
+        finalScore: '7:1', homeScore: 7, awayScore: 1, resultSyncStatus: 'synced'
+      }
+    }
   ];
 
-  function html(value) {
+  function htmlEscape(value) {
     return String(value ?? '')
       .replaceAll('&', '&amp;')
       .replaceAll('<', '&lt;')
@@ -60,419 +77,1430 @@
       .replaceAll('"', '&quot;')
       .replaceAll("'", '&#039;');
   }
-  function isObj(x) { return x && typeof x === 'object' && !Array.isArray(x); }
-  function compact(value, fallback = '暂无', depth = 0) {
-    if (value === null || value === undefined || value === '') return fallback;
+
+  function isPlainObject(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  function scalarText(value, fallback = '') {
+    if (value === null || value === undefined) return fallback;
     if (typeof value === 'string') return value.trim() || fallback;
     if (typeof value === 'number') return Number.isFinite(value) ? String(value) : fallback;
     if (typeof value === 'boolean') return value ? '是' : '否';
-    if (Array.isArray(value)) {
-      const parts = value.map(v => compact(v, '', depth + 1)).filter(Boolean);
-      return parts.length ? [...new Set(parts)].join(' / ') : fallback;
+    return fallback;
+  }
+
+  function compactText(value, fallback = '暂无', depth = 0) {
+    if (value === null || value === undefined) return fallback;
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      return scalarText(value, fallback);
     }
-    if (isObj(value)) {
-      const keys = ['text','label','name','title','summary','display','zh','cn','value','direction','pick','resultPick','winnerPick','modelPick','recommend','recommendation','advice','suggestion','primary','main','choice','result','level','risk','riskLevel','desc','reason'];
-      const out = [];
-      keys.forEach(k => {
-        if (Object.prototype.hasOwnProperty.call(value, k)) {
-          const t = compact(value[k], '', depth + 1);
-          if (t && !/^\[object Object\]$/i.test(t)) out.push(t);
+    if (Array.isArray(value)) {
+      const parts = value.map((item) => compactText(item, '', depth + 1)).filter(Boolean);
+      return parts.length ? Array.from(new Set(parts)).join(' / ') : fallback;
+    }
+    if (isPlainObject(value)) {
+      const priorityKeys = [
+        'text', 'label', 'name', 'title', 'summary', 'display', 'zh', 'cn', 'value',
+        'direction', 'pick', 'resultPick', 'winnerPick', 'modelPick', 'recommend', 'recommendation',
+        'advice', 'suggestion', 'primary', 'main', 'choice', 'result', 'level', 'risk', 'riskLevel'
+      ];
+      const parts = [];
+      priorityKeys.forEach((key) => {
+        if (Object.prototype.hasOwnProperty.call(value, key)) {
+          const part = compactText(value[key], '', depth + 1);
+          if (part && !/^\[object Object\]$/i.test(part)) parts.push(part);
         }
       });
-      if (!out.length && depth < 2) {
-        Object.entries(value).forEach(([k,v]) => {
-          if (['id','key','code','raw','data'].includes(k)) return;
-          const t = compact(v, '', depth + 1);
-          if (t && !/^\[object Object\]$/i.test(t)) out.push(t);
+      if (!parts.length && depth < 2) {
+        Object.entries(value).forEach(([key, val]) => {
+          if (['id', 'key', 'code', 'raw', 'data'].includes(key)) return;
+          const part = compactText(val, '', depth + 1);
+          if (part && !/^\[object Object\]$/i.test(part)) parts.push(part);
         });
       }
-      return out.length ? [...new Set(out)].slice(0, 4).join(' / ') : fallback;
+      return parts.length ? Array.from(new Set(parts)).slice(0, 4).join(' / ') : fallback;
     }
     return fallback;
   }
-  function read(obj, paths, fallback = undefined) {
-    for (const p of paths) {
-      const parts = String(p).split('.');
-      let cur = obj;
-      let ok = true;
-      for (const part of parts) {
-        if (cur === null || cur === undefined || !Object.prototype.hasOwnProperty.call(cur, part)) { ok = false; break; }
-        cur = cur[part];
-      }
-      if (ok && cur !== undefined && cur !== null && cur !== '') return cur;
-    }
-    return fallback;
-  }
-  function data(row) { return isObj(row?.data) ? row.data : (isObj(row) ? row : {}); }
-  function normalizeRows(rows) { return (rows || []).map((row, i) => ({ ...row, _idx: i })); }
 
-  function recursiveDateCandidates(value, out = [], depth = 0, keyHint = '') {
-    if (depth > 4 || value === null || value === undefined) return out;
-    if (typeof value === 'string' || typeof value === 'number') {
-      const s = String(value).trim();
-      if (/\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(s) || /\d{1,2}[:：]\d{2}/.test(s)) {
-        if (!keyHint || /date|time|kick|start|utc|local|beijing|match|fixture|开球|时间|日期/i.test(keyHint)) out.push(s);
+  function firstReadable(row, paths, fallback = '') {
+    const value = read(row, paths, null);
+    const text = compactText(value, '', 0);
+    return text || fallback;
+  }
+
+  function percentText(value) {
+    if (value === null || value === undefined || value === '') return '';
+    const text = compactText(value, '', 0);
+    if (!text) return '';
+    const numeric = Number(String(text).replace('%', '').trim());
+    if (Number.isFinite(numeric)) {
+      const pct = numeric > 1 ? numeric : numeric * 100;
+      return `${Math.round(pct)}%`;
+    }
+    return text;
+  }
+
+  function normalizeScoreString(value) {
+    if (value === null || value === undefined) return null;
+    const text = String(value)
+      .trim()
+      .replace(/[：﹕꞉]/g, ':')
+      .replace(/[\s\u00a0]+/g, '')
+      .replace(/-/g, ':');
+    const match = text.match(/^(\d{1,2}):(\d{1,2})$/);
+    if (!match) return null;
+    return `${Number(match[1])}:${Number(match[2])}`;
+  }
+
+  function parseScore(value) {
+    const normalized = normalizeScoreString(value);
+    if (!normalized) return null;
+    const [homeScore, awayScore] = normalized.split(':').map(Number);
+    return { finalScore: normalized, homeScore, awayScore };
+  }
+
+  function getData(row) {
+    const raw = row && typeof row === 'object' ? row : {};
+    const data = raw.data && typeof raw.data === 'object' ? raw.data : raw;
+    return data || {};
+  }
+
+  function read(row, paths, fallback = '') {
+    const data = getData(row);
+    const sources = [data, row].filter(Boolean);
+    for (const source of sources) {
+      for (const path of paths) {
+        const parts = Array.isArray(path) ? path : String(path).split('.');
+        let current = source;
+        for (const part of parts) {
+          if (current === null || current === undefined) break;
+          current = current[part];
+        }
+        if (current !== null && current !== undefined && String(current).trim() !== '') return current;
+      }
+    }
+    return fallback;
+  }
+
+  function teamName(row, side) {
+    const cn = side === 'home'
+      ? read(row, ['homeCn', 'homeCN', 'home_name_cn', 'homeNameCn', 'homeTeamCn', 'homeTeam.nameCn', 'home.nameCn'])
+      : read(row, ['awayCn', 'awayCN', 'away_name_cn', 'awayNameCn', 'awayTeamCn', 'awayTeam.nameCn', 'away.nameCn']);
+    const en = side === 'home'
+      ? read(row, ['home', 'homeName', 'homeTeam', 'homeTeam.name', 'home.name'], '主队')
+      : read(row, ['away', 'awayName', 'awayTeam', 'awayTeam.name', 'away.name'], '客队');
+    return String(cn || en || (side === 'home' ? '主队' : '客队'));
+  }
+
+  function getMatchId(row) {
+    return read(row, ['id', 'matchId', 'fixtureId', 'match_id'], '');
+  }
+
+  function getStage(row) {
+    const stage = stripMatchCode(read(row, ['stageCn', 'stage', 'round', 'phase', 'roundName'], ''));
+    const group = stripMatchCode(read(row, ['groupCn', 'group', 'groupName', 'pool'], ''));
+    return [stage, group].filter(Boolean).join(' · ') || '赛程';
+  }
+
+  function groupKey(row) {
+    const group = stripMatchCode(read(row, ['groupCn', 'group', 'groupName', 'pool'], '')).trim();
+    return group || '未分组';
+  }
+
+  function stripMatchCode(text) {
+    return compactText(text, '')
+      .replace(/\s*[·｜|\-–—]*\s*#?\d{5,}\b/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function beijingParts(date) {
+    if (!date || Number.isNaN(date.getTime())) return null;
+    try {
+      const parts = new Intl.DateTimeFormat('zh-CN', {
+        timeZone: 'Asia/Shanghai',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', hour12: false
+      }).formatToParts(date).reduce((acc, part) => {
+        if (part.type !== 'literal') acc[part.type] = part.value;
+        return acc;
+      }, {});
+      return parts;
+    } catch (_) {
+      const shifted = new Date(date.getTime() + 8 * 60 * 60 * 1000);
+      return {
+        year: String(shifted.getUTCFullYear()),
+        month: String(shifted.getUTCMonth() + 1).padStart(2, '0'),
+        day: String(shifted.getUTCDate()).padStart(2, '0'),
+        hour: String(shifted.getUTCHours()).padStart(2, '0'),
+        minute: String(shifted.getUTCMinutes()).padStart(2, '0')
+      };
+    }
+  }
+
+  function beijingDateKey(date) {
+    const parts = beijingParts(date);
+    return parts ? `${parts.year}-${parts.month}-${parts.day}` : 'unknown';
+  }
+
+  function parseDateWithOffset(text) {
+    const m = String(text).match(/(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(?:UTC|GMT)\s*([+-])\s*(\d{1,2})(?::?(\d{2}))?/i);
+    if (!m) return null;
+    const sign = m[7] === '-' ? -1 : 1;
+    const offsetMinutes = sign * (Number(m[8]) * 60 + Number(m[9] || 0));
+    const utcMs = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6] || 0)) - offsetMinutes * 60000;
+    const date = new Date(utcMs);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  function pickDateValue(value) {
+    if (value === null || value === undefined || value === '') return '';
+    if (value instanceof Date) return value;
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const picked = pickDateValue(item);
+        if (picked) return picked;
+      }
+      return '';
+    }
+    if (isPlainObject(value)) {
+      const keys = ['beijingTime', 'beijingDateTime', 'beijingDatetime', 'beijing', 'bjTime', 'bj_time', 'bjt', 'iso', 'utc', 'utcTime', 'utcDate', 'localTime', 'datetime', 'dateTime', 'date', 'time', 'kickoff', 'startTime', 'displayTime', 'timeText', 'matchTimeText', 'value', 'text'];
+      for (const key of keys) {
+        if (Object.prototype.hasOwnProperty.call(value, key)) {
+          const picked = pickDateValue(value[key]);
+          if (picked) return picked;
+        }
+      }
+    }
+    return '';
+  }
+
+  function parseDateValue(value) {
+    const picked = pickDateValue(value);
+    if (!picked) return null;
+    if (picked instanceof Date && !Number.isNaN(picked.getTime())) return picked;
+    if (typeof picked === 'number') {
+      const ms = picked < 10000000000 ? picked * 1000 : picked;
+      const date = new Date(ms);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+    let text = String(picked).trim();
+    if (!text || /^时间待定|tbd|待定|unknown$/i.test(text)) return null;
+
+    // 优先读取字符串中的“北京时间：YYYY-MM-DD HH:mm”。这种字段应按 UTC+8 解释，避免手机/PC 时区差异。
+    const bj = text.match(/(?:北京时间|北京|BJT|China\s*Time)\s*[:：]?\s*(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})日?\s*(\d{1,2}):(\d{2})(?::(\d{2}))?/i);
+    if (bj) {
+      const utcMs = Date.UTC(Number(bj[1]), Number(bj[2]) - 1, Number(bj[3]), Number(bj[4]) - 8, Number(bj[5]), Number(bj[6] || 0));
+      const date = new Date(utcMs);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    const offsetDate = parseDateWithOffset(text);
+    if (offsetDate) return offsetDate;
+
+    text = text
+      .replace(/[年/]/g, '-')
+      .replace(/[月]/g, '-')
+      .replace(/[日]/g, '')
+      .replace(/\s+UTC\s*([+-])\s*(\d{1,2})(?!:)/i, ' GMT$1$2:00')
+      .replace(/\s+UTC\s*([+-])\s*(\d{1,2}):(\d{2})/i, ' GMT$1$2:$3');
+    let date = new Date(text);
+    if (!Number.isNaN(date.getTime())) return date;
+
+    const ymd = text.match(/(20\d{2})[-.](\d{1,2})[-.](\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?/);
+    if (ymd) {
+      // 无时区字符串默认按北京时间解释。
+      const utcMs = Date.UTC(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]), Number(ymd[4] || 0) - 8, Number(ymd[5] || 0));
+      date = new Date(utcMs);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+    const md = text.match(/(\d{1,2})[-/月](\d{1,2})(?:日)?(?:\s*(\d{1,2}):(\d{2}))?/);
+    if (md) {
+      const utcMs = Date.UTC(2026, Number(md[1]) - 1, Number(md[2]), Number(md[3] || 0) - 8, Number(md[4] || 0));
+      date = new Date(utcMs);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+    return null;
+  }
+
+  function collectDateCandidates(value, out = [], depth = 0, path = '') {
+    if (value === null || value === undefined || depth > 6) return out;
+    const lowerPath = String(path).toLowerCase();
+    const pathLooksLikeTime = /beijing|bj|bjt|utc|time|date|kickoff|start|fixture|schedule|match/.test(lowerPath);
+    if (value instanceof Date || typeof value === 'number') {
+      out.push({ value, score: pathLooksLikeTime ? 40 : 5 });
+      return out;
+    }
+    if (typeof value === 'string') {
+      const text = value.trim();
+      if (!text) return out;
+      const hasDate = /(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}|\d{1,2}[/-]\d{1,2}|\d{1,2}月\d{1,2})/.test(text);
+      const hasTime = /\d{1,2}:\d{2}/.test(text);
+      const hasTimeWord = /北京时间|北京|BJT|UTC|GMT|当地时间|local|kickoff|开球|比赛时间/i.test(text);
+      if ((hasDate && hasTime) || (hasDate && pathLooksLikeTime) || hasTimeWord) {
+        let score = 0;
+        if (/北京时间|北京|BJT/i.test(text) || /beijing|bj|bjt/.test(lowerPath)) score += 100;
+        if (/UTC|GMT|utc/.test(text) || /utc/.test(lowerPath)) score += 70;
+        if (/local|当地时间|localtime/.test(text + lowerPath)) score += 45;
+        if (pathLooksLikeTime) score += 30;
+        if (hasDate && hasTime) score += 20;
+        out.push({ value: text, score });
       }
       return out;
     }
-    if (Array.isArray(value)) { value.forEach(v => recursiveDateCandidates(v, out, depth + 1, keyHint)); return out; }
-    if (isObj(value)) {
-      Object.entries(value).forEach(([k, v]) => recursiveDateCandidates(v, out, depth + 1, k));
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => collectDateCandidates(item, out, depth + 1, `${path}.${index}`));
+      return out;
+    }
+    if (isPlainObject(value)) {
+      const entries = Object.entries(value);
+      entries.sort(([a], [b]) => {
+        const sa = /beijing|bj|bjt/.test(String(a).toLowerCase()) ? -3 : (/utc|time|date|kickoff|start/.test(String(a).toLowerCase()) ? -2 : 0);
+        const sb = /beijing|bj|bjt/.test(String(b).toLowerCase()) ? -3 : (/utc|time|date|kickoff|start/.test(String(b).toLowerCase()) ? -2 : 0);
+        return sa - sb;
+      });
+      entries.forEach(([key, val]) => collectDateCandidates(val, out, depth + 1, path ? `${path}.${key}` : key));
     }
     return out;
   }
-  function parseDateCandidate(raw) {
-    if (!raw) return null;
-    let text = String(raw).trim().replace(/年|\//g, '-').replace(/月/g, '-').replace(/日/g, ' ');
-    text = text.replace('：', ':');
-    let d = null;
-    if (/Z$|[+-]\d{2}:?\d{2}$/.test(text) || /T/.test(text)) d = new Date(text);
-    if (!d || Number.isNaN(d.getTime())) {
-      const m = text.match(/(20\d{2})-(\d{1,2})-(\d{1,2})(?:\s+|T)?(\d{1,2})?:?(\d{2})?/);
-      if (m) {
-        const y = Number(m[1]), mo = Number(m[2]), da = Number(m[3]), hh = Number(m[4] || 0), mi = Number(m[5] || 0);
-        // Treat date strings without timezone as Beijing time.
-        d = new Date(Date.UTC(y, mo - 1, da, hh - 8, mi, 0));
-      }
+
+  function getKickoff(row) {
+    const priorityPaths = [
+      'beijingTime', 'beijing_time', 'beijingDateTime', 'beijing_datetime', 'kickoffBeijing', 'kickoff_beijing', 'bjTime', 'bj_time', 'bjt',
+      'kickoff', 'kickoffAt', 'kickoff_at', 'startTime', 'start_time', 'startAt', 'start_at',
+      'matchTime', 'match_time', 'matchDate', 'match_date', 'date', 'datetime', 'dateTime',
+      'utcDate', 'utc_date', 'utcTime', 'utc_time', 'localTime', 'local_time', 'time', 'timeText', 'matchTimeText', 'displayTime',
+      'fixture.date', 'fixture.timestamp', 'fixture.kickoff', 'fixture.time',
+      'schedule.kickoff', 'schedule.date', 'schedule.time', 'schedule.beijingTime', 'eventDate', 'event_time'
+    ];
+    for (const path of priorityPaths) {
+      const raw = read(row, [path], '');
+      const parsed = parseDateValue(raw);
+      if (parsed) return parsed;
     }
-    return d && !Number.isNaN(d.getTime()) ? d : null;
-  }
-  function matchDate(row) {
-    const d = data(row);
-    const direct = read(row, ['kickoff','date','matchTime','utcTime','localTime','beijingTime','startTime','matchDate','fixture.date','schedule.date','data.kickoff','data.date','data.matchTime','data.utcTime','data.localTime','data.beijingTime','data.startTime','data.matchDate','data.fixture.date','data.schedule.date'], null);
-    const candidates = [];
-    if (direct) candidates.push(direct);
-    recursiveDateCandidates(d, candidates);
-    for (const c of candidates) {
-      const parsed = parseDateCandidate(c);
+
+    const scanned = collectDateCandidates(row).sort((a, b) => b.score - a.score);
+    for (const item of scanned) {
+      const parsed = parseDateValue(item.value);
       if (parsed) return parsed;
     }
     return null;
   }
-  function bjParts(date) {
-    if (!date) return null;
-    const fmt = new Intl.DateTimeFormat('zh-CN', { timeZone: BEIJING_TZ, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false, weekday:'short' });
-    const parts = Object.fromEntries(fmt.formatToParts(date).map(p => [p.type, p.value]));
-    return { y: parts.year, m: parts.month, d: parts.day, h: parts.hour, min: parts.minute, wd: parts.weekday };
+
+  function localDateKey(date) {
+    if (!date) return 'unknown';
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
   }
-  function dateKey(row) { const p = bjParts(matchDate(row)); return p ? `${p.y}-${p.m}-${p.d}` : 'unknown'; }
-  function dateLabelFromKey(key) {
+
+  function dateLabel(key) {
     if (key === 'unknown') return '时间待定';
-    const d = new Date(`${key}T00:00:00+08:00`);
-    const p = bjParts(d);
-    return p ? `${p.m}/${p.d} ${p.wd}` : key;
-  }
-  function timeText(row) {
-    const p = bjParts(matchDate(row));
-    return p ? `北京时间 ${p.m}/${p.d} ${p.h}:${p.min}` : '时间待定';
-  }
-  function sortByBeijing(list) {
-    return [...list].sort((a,b) => {
-      const da = matchDate(a), db = matchDate(b);
-      const ta = da ? da.getTime() : Number.MAX_SAFE_INTEGER;
-      const tb = db ? db.getTime() : Number.MAX_SAFE_INTEGER;
-      if (ta !== tb) return ta - tb;
-      return Number(a.id || data(a).id || a._idx || 0) - Number(b.id || data(b).id || b._idx || 0);
-    });
+    const m = String(key).match(/^(20\d{2})-(\d{2})-(\d{2})$/);
+    if (!m) return key;
+    const date = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 0, 0));
+    const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][date.getUTCDay()];
+    return `${m[2]}/${m[3]} ${week}`;
   }
 
-  function team(row, side) { return compact(read(row, [`data.${side}Cn`, `data.${side}CN`, `data.${side}NameCn`, `data.${side}`, `${side}Cn`, `${side}`], ''), side === 'home' ? '主队' : '客队'); }
-  function stage(row) { return compact(read(row, ['data.stage','stage'], '小组赛')); }
-  function group(row) { return compact(read(row, ['data.group','data.groupName','group','groupName'], ''), ''); }
-  function stageGroup(row) { return [stage(row), group(row)].filter(Boolean).join(' · '); }
-  function rawStatus(row) { return compact(read(row, ['data.status','status','data.matchStatus','matchStatus'], ''), '未开赛'); }
-  function status(row) {
-    const s = rawStatus(row);
-    if (/赛后|完赛|结束|finished|full|FT|已完/i.test(s)) return '完赛';
-    if (/进行|live|中场|半场/i.test(s)) return '进行中';
-    return '未开赛';
+  function formatDateTime(date) {
+    if (!date) return '时间待定';
+    const parts = beijingParts(date);
+    if (!parts) return '时间待定';
+    return `北京时间 ${parts.month}/${parts.day} ${parts.hour}:${parts.minute}`;
   }
-  function statusClass(s) { return s === '完赛' ? 'finished' : s === '进行中' ? 'live' : 'upcoming'; }
-  function isFinished(row) { return status(row) === '完赛' || Boolean(actualScore(row)); }
-  function isUpcoming(row) { return !isFinished(row) && status(row) !== '进行中'; }
 
-  function parseScoreText(s) {
-    if (s === null || s === undefined) return null;
-    const txt = compact(s, '', 0).replace('：', ':').replace(/\s/g, '');
-    const m = txt.match(/^(\d{1,2})[:\-](\d{1,2})$/);
-    return m ? { finalScore: `${Number(m[1])}:${Number(m[2])}`, homeScore: Number(m[1]), awayScore: Number(m[2]) } : null;
+  function dateKey(row) {
+    const date = getKickoff(row);
+    if (!date) return 'unknown';
+    return beijingDateKey(date);
   }
-  function actualScore(row) {
-    const v = read(row, ['data.postMatchResult.actualScore','data.actualScore','data.finalScore','postMatchResult.actualScore','actualScore','finalScore'], null);
-    let score = parseScoreText(v);
-    if (score) return { ...score, source: sourceName(v, row) };
-    const hs = read(row, ['data.homeScore','homeScore'], null), as = read(row, ['data.awayScore','awayScore'], null);
-    if (hs !== null && as !== null && hs !== '' && as !== '') return { finalScore: `${Number(hs)}:${Number(as)}`, homeScore: Number(hs), awayScore: Number(as), source: 'homeScore/awayScore' };
+
+  function sortOrder(row) {
+    const date = getKickoff(row);
+    if (date) return date.getTime();
+    const order = Number(read(row, ['sortOrder', 'sort_order', 'order', 'matchNo', 'match_no'], NaN));
+    if (Number.isFinite(order)) return 9000000000000 + order;
+    const id = Number(getMatchId(row));
+    return Number.isFinite(id) ? 9000000000000 + id : 9999999999999;
+  }
+
+  function sortByBeijing(rows) {
+    return [...rows].sort((a, b) => sortOrder(a) - sortOrder(b));
+  }
+
+  function todayKeyBeijing() {
+    return beijingDateKey(new Date());
+  }
+
+  function todayMatches() {
+    const key = todayKeyBeijing();
+    return sortByBeijing(state.matches.filter((row) => dateKey(row) === key));
+  }
+
+  function nearestFutureDateKey() {
+    const now = Date.now();
+    const candidates = sortByBeijing(state.matches.filter((row) => {
+      const kickoff = getKickoff(row);
+      return kickoff && kickoff.getTime() >= now;
+    }));
+    return candidates.length ? dateKey(candidates[0]) : null;
+  }
+
+  function matchesForTodayOrNearest() {
+    const todayRows = todayMatches();
+    if (todayRows.length) return { rows: todayRows, label: '今日比赛', actualToday: true, key: todayKeyBeijing() };
+    const nearestKey = nearestFutureDateKey();
+    if (nearestKey) {
+      return { rows: sortByBeijing(state.matches.filter((row) => dateKey(row) === nearestKey)), label: `${dateLabel(nearestKey)} 比赛`, actualToday: false, key: nearestKey };
+    }
+    return { rows: [], label: '今日比赛', actualToday: true, key: todayKeyBeijing() };
+  }
+
+  function scoreResolver(row) {
+    const data = getData(row);
+    const candidates = [
+      { key: 'data.postMatchResult.actualScore', value: data?.postMatchResult?.actualScore },
+      { key: 'data.actualScore', value: data?.actualScore },
+      { key: 'data.finalScore', value: data?.finalScore },
+      { key: 'row.postMatchResult.actualScore', value: row?.postMatchResult?.actualScore },
+      { key: 'row.actualScore', value: row?.actualScore },
+      { key: 'row.finalScore', value: row?.finalScore }
+    ];
+
+    for (const candidate of candidates) {
+      const parsed = parseScore(candidate.value);
+      if (parsed) return { ...parsed, source: candidate.key };
+    }
+
+    const home = read(row, ['homeScore', 'home_score', 'score.home', 'result.home'], null);
+    const away = read(row, ['awayScore', 'away_score', 'score.away', 'result.away'], null);
+    if (home !== null && away !== null && String(home).trim() !== '' && String(away).trim() !== '') {
+      const parsed = parseScore(`${home}:${away}`);
+      if (parsed) return { ...parsed, source: 'homeScore + awayScore' };
+    }
+
     return null;
   }
-  function sourceName(v, row) {
-    const d = data(row);
-    if (d?.postMatchResult?.actualScore === v) return 'postMatchResult.actualScore';
-    if (d?.actualScore === v) return 'actualScore';
-    if (d?.finalScore === v) return 'finalScore';
-    return 'scoreResolver';
+
+  function getRawStatus(row) {
+    return String(read(row, ['statusCn', 'status', 'matchStatus', 'state'], '')).trim();
   }
-  function predictionScores(row) {
-    const d = data(row);
-    const candidates = [d.predictions, d.predictionScores, d.topScores, d.mainScores, d.modelScores, d.primaryScores, d.scores, d.scoreOptions, d.exactScores, d?.prediction?.scores, d?.model?.scores, row.predictions, row.topScores];
-    const out = [];
-    const add = (v) => {
-      if (Array.isArray(v)) v.forEach(add);
-      else {
-        const score = parseScoreText(v);
-        if (score && !out.includes(score.finalScore)) out.push(score.finalScore);
+
+  function isFinished(row) {
+    const actual = scoreResolver(row);
+    if (actual) return true;
+    const status = getRawStatus(row);
+    return /赛后|完赛|已结束|结束|finished|fulltime|full_time|ft/i.test(status);
+  }
+
+  function isLive(row) {
+    const status = getRawStatus(row);
+    return /直播|进行|live|in_progress|playing/i.test(status);
+  }
+
+  function displayStatus(row) {
+    if (isFinished(row)) return '完赛';
+    if (isLive(row)) return '进行中';
+    const status = getRawStatus(row);
+    return status || '未开赛';
+  }
+
+  function getRisk(row) {
+    const raw = read(row, ['risk', 'riskLevel', 'upsetRisk', 'risk_score_label', 'riskScoreLabel', 'modelRisk'], '中');
+    if (typeof raw === 'number') {
+      if (raw >= 67) return '高';
+      if (raw <= 33) return '低';
+      return '中';
+    }
+    const text = compactText(raw, '中');
+    const numeric = Number(String(text).replace(/[^0-9.]/g, ''));
+    if (/高|high|danger/i.test(text)) return text;
+    if (/低|low|safe/i.test(text)) return text;
+    if (Number.isFinite(numeric) && numeric > 0) {
+      if (numeric >= 67) return `高 ${Math.round(numeric)}/100`;
+      if (numeric <= 33) return `低 ${Math.round(numeric)}/100`;
+      return `中 ${Math.round(numeric)}/100`;
+    }
+    return text || '中';
+  }
+
+  function getConfidence(row) {
+    const value = read(row, ['confidence', 'confidenceScore', 'modelConfidence', 'favoriteProb', 'winConfidence', 'confidenceText', 'model.confidence', 'prediction.confidence'], '');
+    return percentText(value);
+  }
+
+  function confidenceNumber(row) {
+    const text = getConfidence(row);
+    const numeric = Number(String(text).replace('%', '').trim());
+    return Number.isFinite(numeric) ? numeric : 0;
+  }
+
+  function riskNumber(row) {
+    const text = getRisk(row);
+    if (/高|danger|high/i.test(text)) return 90;
+    if (/低|safe|low/i.test(text)) return 20;
+    const numeric = Number(String(text).replace(/[^0-9.]/g, ''));
+    return Number.isFinite(numeric) ? numeric : 50;
+  }
+
+  function flattenScores(input, output = []) {
+    if (input === null || input === undefined) return output;
+    if (typeof input === 'string' || typeof input === 'number') {
+      const parsed = normalizeScoreString(input);
+      if (parsed) output.push(parsed);
+      return output;
+    }
+    if (Array.isArray(input)) {
+      input.forEach((item) => flattenScores(item, output));
+      return output;
+    }
+    if (typeof input === 'object') {
+      const directKeys = [
+        'score', 'finalScore', 'predictedScore', 'actualScore', 'value', 'text', 'label',
+        'primary', 'secondary', 'protect', 'main', 'coldScore', 'upsetScore'
+      ];
+      directKeys.forEach((key) => flattenScores(input[key], output));
+      if (input.homeScore !== undefined && input.awayScore !== undefined) {
+        flattenScores(`${input.homeScore}:${input.awayScore}`, output);
       }
-    };
-    candidates.forEach(add);
-    return out.slice(0, 5);
+      if (input.home !== undefined && input.away !== undefined) {
+        flattenScores(`${input.home}:${input.away}`, output);
+      }
+      ['scores', 'topScores', 'mainScores', 'modelScores', 'exactScores', 'scoreOptions', 'predictions'].forEach((key) => flattenScores(input[key], output));
+    }
+    return output;
   }
-  function recommendation(row) { return compact(read(row, ['data.recommendation','data.recommend','data.direction','data.pick','data.resultPick','data.modelPick','data.advice','recommendation','recommend'], '暂无'), '暂无'); }
-  function risk(row) { return compact(read(row, ['data.risk','data.riskLevel','data.upsetRisk','data.coldRisk','risk'], '中'), '中'); }
-  function confidence(row) {
-    const v = compact(read(row, ['data.confidence','data.confidenceScore','data.winConfidence','confidence'], ''), '', 0);
-    const n = Number(String(v).replace('%','').trim());
-    if (!Number.isFinite(n)) return '';
-    return `${Math.round(n > 1 ? n : n * 100)}%`;
+
+  function predictionScores(row) {
+    const data = getData(row);
+    const candidates = [
+      data.predictions,
+      data.predictionScores,
+      data.predictedScores,
+      data.topScores,
+      data.mainScores,
+      data.modelScores,
+      data.primaryScores,
+      data.scores,
+      data.scoreOptions,
+      data.exactScores,
+      data.model?.scores,
+      data.prediction?.scores,
+      data.prediction?.exactScores,
+      data.predictedScore,
+      data.mainScore,
+      data.scoreline,
+      row.predictions,
+      row.topScores,
+      row.modelScores
+    ];
+    const unique = [];
+    candidates.forEach((candidate) => flattenScores(candidate, unique));
+    return Array.from(new Set(unique)).slice(0, 5);
   }
-  function riskScore(row) {
-    const r = risk(row);
-    const n = Number(String(r).replace(/[^\d.]/g, ''));
-    if (Number.isFinite(n) && n > 0) return n > 1 ? n : n * 100;
-    if (/高|爆|冷|danger|high/i.test(r)) return 90;
-    if (/中|warn|medium/i.test(r)) return 60;
-    if (/低|稳|low/i.test(r)) return 25;
-    return 50;
+
+  function recommendation(row) {
+    const text = firstReadable(row, [
+      'recommendation', 'recommend', 'direction', 'pick', 'winnerPick', 'modelPick', 'advice',
+      'resultPick', 'prediction.recommendation', 'model.recommendation', 'summary.recommendation'
+    ], '暂无');
+    return /^\[object Object\]$/i.test(text) ? '暂无' : text;
   }
-  function confidenceNum(row) { const c = confidence(row); const n = Number(c.replace('%','')); return Number.isFinite(n) ? n : 0; }
-  function directionFromScore(s) { return !s ? '' : s.homeScore > s.awayScore ? '主胜' : s.homeScore < s.awayScore ? '客胜' : '平局'; }
-  function directionHit(row) {
-    const actual = actualScore(row); if (!actual) return null;
-    const rec = recommendation(row);
-    const dir = directionFromScore(actual);
-    if (!rec || rec === '暂无') return null;
-    if (dir === '主胜' && /主胜|主队|主不败|主队不败|胜/i.test(rec)) return true;
-    if (dir === '客胜' && /客胜|客队|客不败|客队不败/i.test(rec)) return true;
-    if (dir === '平局' && /平|不败|保护/i.test(rec)) return true;
-    return false;
-  }
-  function exactHit(row) { const a = actualScore(row); return a ? predictionScores(row).includes(a.finalScore) : false; }
-  function modelLine(row) {
-    const d = data(row);
+
+  function probabilitySummary(row) {
+    const home = percentText(read(row, ['homeWinProb', 'homeProb', 'probHome', 'probabilities.home', 'probabilities.homeWin', 'winProb.home', 'resultProb.home'], ''));
+    const draw = percentText(read(row, ['drawProb', 'probDraw', 'probabilities.draw', 'winProb.draw', 'resultProb.draw'], ''));
+    const away = percentText(read(row, ['awayWinProb', 'awayProb', 'probAway', 'probabilities.away', 'probabilities.awayWin', 'winProb.away', 'resultProb.away'], ''));
     const parts = [];
-    const elo = compact(read(row, ['data.eloDiff','data.elo.diff','eloDiff'], ''), '', 0);
-    const lh = compact(read(row, ['data.lambdaHome','data.xgHome','data.homeLambda','data.model.lambdaHome'], ''), '', 0);
-    const la = compact(read(row, ['data.lambdaAway','data.xgAway','data.awayLambda','data.model.lambdaAway'], ''), '', 0);
-    if (elo) parts.push(`Elo差：${elo}`);
-    if (lh || la) parts.push(`预期进球：${lh || '?'}:${la || '?'}`);
-    const draw = compact(read(row, ['data.drawPressure','data.drawProb','data.probabilities.draw'], ''), '', 0);
-    if (draw) parts.push(`平局压力：${draw}`);
+    if (home) parts.push(`主胜 ${home}`);
+    if (draw) parts.push(`平局 ${draw}`);
+    if (away) parts.push(`客胜 ${away}`);
+    return parts.join(' / ');
+  }
+
+  function modelSummary(row) {
+    const parts = [];
+    const elo = compactText(read(row, ['eloDiff', 'elo_diff', 'elo.delta', 'model.eloDiff'], ''), '');
+    const lambdaHome = compactText(read(row, ['lambdaHome', 'lambda_home', 'xgHome', 'expectedGoals.home', 'model.lambdaHome'], ''), '');
+    const lambdaAway = compactText(read(row, ['lambdaAway', 'lambda_away', 'xgAway', 'expectedGoals.away', 'model.lambdaAway'], ''), '');
+    const lowScore = percentText(read(row, ['lowScoreVolatility', 'low_score_volatility', 'under25Prob', 'under2_5', 'model.lowScoreVolatility'], ''));
+    const drawPressure = percentText(read(row, ['drawPressure', 'draw_pressure', 'model.drawPressure'], ''));
+    const underdog = percentText(read(row, ['underdogProb', 'underdog_prob', 'model.underdogProb'], ''));
+    if (elo) parts.push(`Elo差 ${elo}`);
+    if (lambdaHome || lambdaAway) parts.push(`λ ${lambdaHome || '-'} / ${lambdaAway || '-'}`);
+    if (drawPressure) parts.push(`平局压力 ${drawPressure}`);
+    if (underdog) parts.push(`弱势方 ${underdog}`);
+    if (lowScore) parts.push(`小比分 ${lowScore}`);
     return parts.join(' · ');
   }
 
-  function todayKey() {
-    const p = bjParts(new Date());
-    return p ? `${p.y}-${p.m}-${p.d}` : 'all';
-  }
-  function nearestPlayableDateKey(list) {
-    const keys = [...new Set(list.map(dateKey).filter(k => k !== 'unknown'))].sort();
-    if (!keys.length) return 'unknown';
-    const today = todayKey();
-    const future = keys.find(k => k >= today);
-    return future || keys[keys.length - 1];
-  }
-  function listForMode() {
-    let list = sortByBeijing(state.matches);
-    if (state.activeMode === 'today') {
-      const k = nearestPlayableDateKey(list);
-      list = list.filter(m => dateKey(m) === k);
-    }
-    if (state.activeMode === 'upcoming') list = list.filter(isUpcoming);
-    if (state.activeMode === 'finished') list = list.filter(isFinished);
-    if (state.activeMode === 'risk') list = list.filter(m => riskScore(m) >= 70);
-    return list;
-  }
-  function filteredSchedule() {
-    let list = listForMode();
-    if (state.date !== 'all') list = list.filter(m => dateKey(m) === state.date);
-    if (state.status !== 'all') {
-      if (state.status === 'finished') list = list.filter(isFinished);
-      if (state.status === 'upcoming') list = list.filter(isUpcoming);
-      if (state.status === 'live') list = list.filter(m => status(m) === '进行中');
-    }
-    if (state.group !== 'all') list = list.filter(m => group(m) === state.group);
-    const q = state.search.trim().toLowerCase();
-    if (q) list = list.filter(m => [team(m,'home'), team(m,'away'), stage(m), group(m), status(m), recommendation(m), risk(m)].join(' ').toLowerCase().includes(q));
-    return sortByBeijing(list);
+  function learningSummary(row) {
+    return firstReadable(row, [
+      'learningInsight', 'learningInsights', 'learning', 'v10Learning', 'v104Learning',
+      'selfLearning', 'modelLearning', 'sampleLearning', 'analysis.learningInsight'
+    ], '');
   }
 
-  function renderCard(row, compactCard = false) {
-    const st = status(row);
-    const scores = predictionScores(row);
-    const actual = actualScore(row);
-    const conf = confidence(row);
+  function resultDirectionFromScore(score) {
+    if (!score) return '';
+    if (score.homeScore > score.awayScore) return '主胜';
+    if (score.homeScore < score.awayScore) return '客胜';
+    return '平';
+  }
+
+  function directionHit(row) {
+    const actual = scoreResolver(row);
+    if (!actual) return null;
+    const actualDirection = resultDirectionFromScore(actual);
+    const rec = simpleRecommendationText(row);
+    if (!actualDirection || !rec || rec === '暂无') return null;
+    const text = String(rec).toLowerCase();
+    const homeNoLose = /主队?不败|主不败|主胜或平|主平|1x|home\s*or\s*draw/.test(text);
+    const awayNoLose = /客队?不败|客不败|客胜或平|客平|x2|away\s*or\s*draw/.test(text);
+    const drawProtect = /平局保护|平局|防平|平|draw|\bx\b/.test(text);
+    if (actualDirection === '平') return drawProtect || homeNoLose || awayNoLose;
+    if (actualDirection === '主胜') return /主胜|主队胜|主推主|home|\b1\b/.test(text) || homeNoLose;
+    if (actualDirection === '客胜') return /客胜|客队胜|客推客|away|\b2\b/.test(text) || awayNoLose;
+    return null;
+  }
+
+  function exactHit(row) {
+    const actual = scoreResolver(row);
+    if (!actual) return false;
+    return predictionScores(row).includes(actual.finalScore);
+  }
+
+  function scoreTotal(score) {
+    const parsed = parseScore(score);
+    return parsed ? parsed.homeScore + parsed.awayScore : null;
+  }
+
+  function predictionOutcome(row) {
+    const actual = scoreResolver(row);
+    if (!actual) return null;
+    const pack = predictionPack(row);
+    if (actual.finalScore === pack.main) return 'main';
+    if (pack.backups.includes(actual.finalScore)) return 'backup';
+    if (actual.finalScore === pack.cold) return 'cold';
+    if (predictionScores(row).includes(actual.finalScore)) return 'other';
+    return 'miss';
+  }
+
+  function callsLowScore(row) {
+    const pack = predictionPack(row);
+    const rec = simpleRecommendationText(row);
+    return /小比分|低比分|under|保守|平局/.test(rec) || pack.all.some((score) => {
+      const total = scoreTotal(score);
+      return total !== null && total <= 2;
+    });
+  }
+
+  function lowScoreHit(row) {
+    const actual = scoreResolver(row);
+    if (!actual || !callsLowScore(row)) return null;
+    const total = actual.homeScore + actual.awayScore;
+    return total <= 2;
+  }
+
+  function filteredMatches() {
+    const keyword = state.search.trim().toLowerCase();
+    return state.matches.filter((row) => {
+      if (state.date !== 'all' && dateKey(row) !== state.date) return false;
+      if (state.status !== 'all') {
+        if (state.status === 'finished' && !isFinished(row)) return false;
+        if (state.status === 'upcoming' && isFinished(row)) return false;
+        if (state.status === 'live' && !isLive(row)) return false;
+      }
+      if (state.group !== 'all' && groupKey(row) !== state.group) return false;
+      if (!keyword) return true;
+      const haystack = [
+        teamName(row, 'home'), teamName(row, 'away'), getStage(row), groupKey(row), displayStatus(row),
+        recommendation(row), getMatchId(row), formatDateTime(getKickoff(row)), probabilitySummary(row), modelSummary(row)
+      ].join(' ').toLowerCase();
+      return haystack.includes(keyword);
+    });
+  }
+
+  function computeStats(matches = state.matches) {
+    const total = matches.length;
+    const finished = matches.filter(isFinished);
+    const withActual = matches.filter((row) => Boolean(scoreResolver(row)));
+    const exactHits = withActual.filter(exactHit).length;
+    const directionCandidates = withActual.map((row) => directionHit(row)).filter((value) => value !== null);
+    const directionHits = directionCandidates.filter(Boolean).length;
+
+    const outcomes = withActual.map(predictionOutcome);
+    const mainHits = outcomes.filter((value) => value === 'main').length;
+    const backupHits = outcomes.filter((value) => value === 'backup').length;
+    const coldHits = outcomes.filter((value) => value === 'cold').length;
+    const otherHits = outcomes.filter((value) => value === 'other').length;
+
+    const lowScoreCandidates = withActual.map((row) => lowScoreHit(row)).filter((value) => value !== null);
+    const lowScoreHits = lowScoreCandidates.filter(Boolean).length;
+
+    const highConfidenceActual = withActual.filter((row) => confidenceNumber(row) >= 55);
+    const highConfidenceDirection = highConfidenceActual.map((row) => directionHit(row)).filter((value) => value !== null);
+    const highConfidenceHits = highConfidenceDirection.filter(Boolean).length;
+
+    return {
+      total,
+      finished: finished.length,
+      withActual: withActual.length,
+      exactHits,
+      exactHitRate: withActual.length ? exactHits / withActual.length : 0,
+      directionCandidates: directionCandidates.length,
+      directionHits,
+      directionHitRate: directionCandidates.length ? directionHits / directionCandidates.length : 0,
+      mainHits,
+      backupHits,
+      coldHits,
+      otherHits,
+      mainHitRate: withActual.length ? mainHits / withActual.length : 0,
+      backupHitRate: withActual.length ? backupHits / withActual.length : 0,
+      coldHitRate: withActual.length ? coldHits / withActual.length : 0,
+      lowScoreCandidates: lowScoreCandidates.length,
+      lowScoreHits,
+      lowScoreHitRate: lowScoreCandidates.length ? lowScoreHits / lowScoreCandidates.length : 0,
+      highConfidenceCandidates: highConfidenceDirection.length,
+      highConfidenceHits,
+      highConfidenceHitRate: highConfidenceDirection.length ? highConfidenceHits / highConfidenceDirection.length : 0,
+      upcoming: matches.filter((row) => !isFinished(row) && !isLive(row)).length,
+      live: matches.filter(isLive).length
+    };
+  }
+
+  function statusPill(row) {
+    const status = displayStatus(row);
+    const klass = isFinished(row) ? 'done' : (isLive(row) ? 'live' : '');
+    return `<span class="status-pill ${klass}">${htmlEscape(status)}</span>`;
+  }
+
+  function riskBadge(row) {
+    const risk = getRisk(row);
+    const klass = /高|high/i.test(risk) ? 'danger' : (/低|low/i.test(risk) ? 'ok' : 'warn');
+    return `<span class="badge ${klass}">风险：${htmlEscape(risk)}</span>`;
+  }
+
+  function predictionPack(row) {
+    const raw = predictionScores(row);
+    const unique = Array.from(new Set(raw.filter(Boolean)));
     const rec = recommendation(row);
-    const rsk = risk(row);
-    const model = modelLine(row);
+    const fallback = /客胜|客队/i.test(rec)
+      ? ['0:1', '1:2', '1:1', '0:2']
+      : (/平|保护/i.test(rec) ? ['1:1', '0:0', '2:2', '1:0'] : ['1:0', '2:1', '1:1', '2:0']);
+    const scores = Array.from(new Set([...unique, ...fallback]));
+    const main = scores[0] || '1:0';
+    const backups = scores.filter((s) => s !== main).slice(0, 2);
+    const cold = scores.find((s) => s !== main && !backups.includes(s) && /0:0|1:1|0:1|1:2|2:2/.test(s)) || backups[1] || '1:1';
+    return { main, backups, cold, all: Array.from(new Set([main, ...backups, cold, ...scores])).slice(0, 6) };
+  }
+
+  function simpleRecommendationText(row) {
+    const rec = recommendation(row);
+    if (/主胜/.test(rec)) return '主胜';
+    if (/客胜/.test(rec)) return '客胜';
+    if (/平/.test(rec)) return /保护/.test(rec) ? '平局保护' : '平局';
+    if (/主队|主不败|主队不败/.test(rec)) return '主队不败';
+    if (/客队|客不败|客队不败/.test(rec)) return '客队不败';
+    if (/小比分|低比分|under/i.test(rec)) return '小比分保护';
+    return rec && rec !== '暂无' ? rec : '小比分观察';
+  }
+
+  function shortAnalysis(row) {
+    const pack = predictionPack(row);
+    const rec = simpleRecommendationText(row);
+    const risk = getRisk(row);
+    const prob = probabilitySummary(row);
+    const base = `倾向${rec}，主推 ${pack.main}，备选 ${pack.backups.join(' / ')}，防冷 ${pack.cold}。`;
+    const riskText = /高|danger|high/i.test(risk) ? '该场波动偏大，串关需防冷。' : '适合常规观察，重仓仍需谨慎。';
+    return `${base}${riskText}${prob ? ` 概率参考：${prob}。` : ''}`;
+  }
+
+  function renderMatchCard(row, compact = false) {
+    const actual = scoreResolver(row);
+    const pack = predictionPack(row);
+    const kickoff = getKickoff(row);
+    const confidence = getConfidence(row);
+    const probs = probabilitySummary(row);
+    const id = getMatchId(row);
+    const exact = actual ? exactHit(row) : null;
+    const dHit = actual ? directionHit(row) : null;
     return `
-      <article class="match-card">
+      <article class="match-card ${compact ? 'compact' : ''} ${isFinished(row) ? 'finished-card' : ''}">
         <div class="match-top">
-          <div>${html(stageGroup(row))}<br>${html(timeText(row))}</div>
-          <span class="badge ${statusClass(st)}">${html(st)}</span>
+          <div>
+            <div class="stage">${htmlEscape(getStage(row))}</div>
+            <div class="muted">${htmlEscape(formatDateTime(kickoff))}</div>
+          </div>
+          ${statusPill(row)}
         </div>
         <div class="teams">
-          <div class="team home">${html(team(row,'home'))}</div>
+          <div class="team-name home">${htmlEscape(teamName(row, 'home'))}</div>
           <div class="vs">VS</div>
-          <div class="team away">${html(team(row,'away'))}</div>
+          <div class="team-name away">${htmlEscape(teamName(row, 'away'))}</div>
         </div>
-        <div class="score-row"><span>预测比分</span>${scores.length ? scores.map(s => `<span class="score-tag">${html(s)}</span>`).join('') : '<span class="score-tag">暂无</span>'}</div>
-        <div class="score-row"><span>赛后比分</span>${actual ? `<span class="score-tag actual">${html(actual.finalScore)}</span>` : '<span class="score-tag actual">未同步</span>'}</div>
-        <div class="card-meta">
-          <div class="meta-box"><span>推荐</span><b>${html(rec)}</b></div>
-          <div class="meta-box"><span>风险</span><b>${html(rsk)}</b></div>
-          <div class="meta-box"><span>置信度</span><b>${html(conf || '暂无')}</b></div>
+        <div class="score-line primary-score"><span class="muted">主推比分</span><span class="score-tag main-score">${htmlEscape(pack.main)}</span></div>
+        <div class="score-line"><span class="muted">备选比分</span>${pack.backups.map((s) => `<span class="score-tag">${htmlEscape(s)}</span>`).join('')}</div>
+        <div class="score-line"><span class="muted">防冷比分</span><span class="score-tag cold-score">${htmlEscape(pack.cold)}</span></div>
+        <div class="score-line">
+          <span class="muted">赛后比分</span>
+          ${actual ? `<span class="score-tag actual">${htmlEscape(actual.finalScore)}</span><span class="muted">来源：${htmlEscape(actual.source)}</span>` : '<span class="muted">未同步</span>'}
         </div>
-        <div class="explain">${html(model || '模型解释：方向判断优先，比分仅作为主推/备选/防冷参考。')}</div>
-      </article>`;
+        <div class="badge-line">
+          <span class="badge ok">推荐：${htmlEscape(simpleRecommendationText(row))}</span>
+          ${riskBadge(row)}
+          ${confidence ? `<span class="badge">信心：${htmlEscape(confidence)}</span>` : ''}
+          ${actual ? `<span class="badge ${exact ? 'ok' : 'warn'}">比分：${exact ? '命中' : '未中'}</span>` : ''}
+          ${actual && dHit !== null ? `<span class="badge ${dHit ? 'ok' : 'warn'}">方向：${dHit ? '命中' : '未中'}</span>` : ''}
+        </div>
+        <div class="analysis-note">${htmlEscape(shortAnalysis(row))}</div>
+        <div class="card-actions">
+          <button class="btn mini" type="button" data-detail-id="${htmlEscape(id)}">详情分析</button>
+          <button class="btn mini ghost" type="button" data-copy-id="${htmlEscape(id)}">复制推荐</button>
+        </div>
+      </article>
+    `;
   }
 
-  function renderSelects() {
-    const dates = [...new Set(sortByBeijing(state.matches).map(dateKey))];
-    const groups = [...new Set(state.matches.map(group).filter(Boolean))].sort((a,b) => a.localeCompare(b, 'zh-CN'));
-    const dateOptions = ['<option value="all">全部日期</option>'].concat(dates.map(k => `<option value="${html(k)}">${html(dateLabelFromKey(k))}</option>`)).join('');
-    const groupOptions = ['<option value="all">全部分组</option>'].concat(groups.map(g => `<option value="${html(g)}">${html(g)}</option>`)).join('');
-    if (els.dateFilter.innerHTML !== dateOptions) els.dateFilter.innerHTML = dateOptions;
-    if (els.groupFilter.innerHTML !== groupOptions) els.groupFilter.innerHTML = groupOptions;
-    els.dateFilter.value = dates.includes(state.date) ? state.date : 'all';
-    els.groupFilter.value = groups.includes(state.group) ? state.group : 'all';
-    els.statusFilter.value = state.status;
-
-    const chips = ['all', ...dates].map(k => `<button class="date-chip ${state.date === k ? 'active' : ''}" type="button" data-date="${html(k)}">${html(k === 'all' ? '全部日期' : dateLabelFromKey(k))}</button>`).join('');
-    els.dateStrip.innerHTML = chips || '<div class="empty">暂无日期</div>';
+  function copyRecommendation(row) {
+    const pack = predictionPack(row);
+    const text = `${teamName(row, 'home')} vs ${teamName(row, 'away')}：推荐${simpleRecommendationText(row)}，主推${pack.main}，备选${pack.backups.join('/')}，防冷${pack.cold}。`;
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(() => {
+        state.error = '推荐内容已复制';
+        updateStatusBar();
+      }).catch(() => {
+        state.error = text;
+        updateStatusBar();
+      });
+    } else {
+      state.error = text;
+      updateStatusBar();
+    }
   }
 
-  function renderStatus() {
-    const err = state.error ? ` · 错误：${state.error}` : '';
-    els.statusBar.textContent = `${VERSION} · 当前 ${state.matches.length} 场 · 来源：${state.source}${state.lastLoadedAt ? ` · 更新时间：${state.lastLoadedAt}` : ''}${err}`;
+  function openMatchDetail(row) {
+    const dialog = $('#matchDialog');
+    const title = $('#dialogTitle');
+    const body = $('#dialogBody');
+    if (!dialog || !title || !body) return;
+    const pack = predictionPack(row);
+    const actual = scoreResolver(row);
+    const risk = getRisk(row);
+    const confidence = getConfidence(row) || '待观察';
+    const rec = simpleRecommendationText(row);
+    title.textContent = `${teamName(row, 'home')} vs ${teamName(row, 'away')} · 详情分析`;
+    body.innerHTML = `
+      <div class="detail-grid">
+        <div class="detail-card">
+          <h3>推荐结论</h3>
+          <p>推荐方向：<strong>${htmlEscape(rec)}</strong></p>
+          <p>主推比分：<strong>${htmlEscape(pack.main)}</strong></p>
+          <p>备选比分：<strong>${htmlEscape(pack.backups.join(' / '))}</strong></p>
+          <p>防冷比分：<strong>${htmlEscape(pack.cold)}</strong></p>
+        </div>
+        <div class="detail-card">
+          <h3>比赛信息</h3>
+          <p>${htmlEscape(getStage(row))}</p>
+          <p>${htmlEscape(formatDateTime(getKickoff(row)))}</p>
+          <p>状态：<strong>${htmlEscape(displayStatus(row))}</strong></p>
+          <p>赛后比分：<strong>${htmlEscape(actual?.finalScore || '未同步')}</strong></p>
+        </div>
+      </div>
+      <div class="detail-card">
+        <h3>简化分析</h3>
+        <p>${htmlEscape(shortAnalysis(row))}</p>
+        <p>风险等级：<strong>${htmlEscape(risk)}</strong>；信心值：<strong>${htmlEscape(confidence)}</strong></p>
+        <p><strong>串关建议：</strong>${/高|danger|high/i.test(risk) ? '该场建议只做防冷观察，不放重注串关。' : '可以放入小串观察，优先搭配低风险比赛。'}</p>
+        <p class="muted">说明：页面只展示用户能直接使用的结论，复杂模型参数已折叠为“推荐方向、风险、信心、防冷”。</p>
+      </div>
+    `;
+    if (typeof dialog.showModal === 'function') dialog.showModal();
+    else dialog.setAttribute('open', 'open');
   }
 
-  function modeLabel() {
-    return {
-      today: '今日比赛推荐',
-      all: '全部赛程',
-      upcoming: '未开赛比赛',
-      finished: '已完赛比赛',
-      risk: '爆冷风险高'
-    }[state.activeMode] || '比赛推荐';
+  function renderMetrics(stats) {
+    return `
+      <div class="grid cards-4">
+        <div class="metric"><div class="label">总比赛</div><div class="value">${stats.total}</div><div class="note">按北京时间排序</div></div>
+        <div class="metric"><div class="label">已完赛</div><div class="value">${stats.withActual}</div><div class="note">有赛后比分才统计</div></div>
+        <div class="metric"><div class="label">比分命中率</div><div class="value">${Math.round(stats.exactHitRate * 100)}%</div><div class="note">${stats.exactHits}/${stats.withActual}</div></div>
+        <div class="metric"><div class="label">方向命中率</div><div class="value">${Math.round(stats.directionHitRate * 100)}%</div><div class="note">${stats.directionHits}/${stats.directionCandidates}</div></div>
+        <div class="metric"><div class="label">主推比分命中</div><div class="value">${stats.mainHits}</div><div class="note">${Math.round(stats.mainHitRate * 100)}%</div></div>
+        <div class="metric"><div class="label">备选比分命中</div><div class="value">${stats.backupHits}</div><div class="note">${Math.round(stats.backupHitRate * 100)}%</div></div>
+        <div class="metric"><div class="label">防冷比分命中</div><div class="value">${stats.coldHits}</div><div class="note">${Math.round(stats.coldHitRate * 100)}%</div></div>
+        <div class="metric"><div class="label">小比分判断</div><div class="value">${Math.round(stats.lowScoreHitRate * 100)}%</div><div class="note">${stats.lowScoreHits}/${stats.lowScoreCandidates}</div></div>
+      </div>
+    `;
+  }
+
+  function rankMatches(rows) {
+    return [...rows].sort((a, b) => {
+      const conf = confidenceNumber(b) - confidenceNumber(a);
+      if (conf) return conf;
+      return sortOrder(a) - sortOrder(b);
+    });
+  }
+
+  function futureMatches() {
+    return sortByBeijing(state.matches.filter((row) => !isFinished(row)));
+  }
+
+  function renderMiniSection(title, rows, emptyText, actionHtml = '') {
+    const orderedRows = sortByBeijing(rows);
+    return `
+      <section class="panel section-compact">
+        <div class="section-head">
+          <h2>${htmlEscape(title)}</h2>
+          <div class="section-actions">
+            <span class="muted">${orderedRows.length} 场</span>
+            ${actionHtml}
+          </div>
+        </div>
+        <div class="grid cards-3">
+          ${orderedRows.length ? orderedRows.map((row) => renderMatchCard(row, true)).join('') : `<div class="empty">${htmlEscape(emptyText)}</div>`}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderHome() {
+    const stats = computeStats();
+    const futures = futureMatches();
+    const todayPack = matchesForTodayOrNearest();
+    const todayRows = todayPack.rows.slice(0, 6);
+    const highConfidence = sortByBeijing(rankMatches(futures).filter((row) => confidenceNumber(row) >= 55).slice(0, 6));
+    const upsetAlerts = sortByBeijing([...futures].sort((a, b) => riskNumber(b) - riskNumber(a)).filter((row) => riskNumber(row) >= 60).slice(0, 6));
+    const mainList = sortByBeijing((todayRows.length ? todayRows : futures).slice(0, 12));
+    const todayTitle = todayPack.actualToday ? '今日比赛' : '今日暂无比赛 · 最近赛程';
+    const todayNote = todayPack.actualToday ? '按北京时间筛选今日比赛，点击可进入完整今日推荐。' : `${todayPack.label}，今日暂无比赛，已显示最近比赛。`;
+    const goTodayButton = '<button class="btn mini" type="button" data-jump-tab="today">查看今日比赛推荐</button>';
+
+    views.home.innerHTML = `
+      <section class="panel">
+        <h2>核心概览</h2>
+        ${renderMetrics(stats)}
+      </section>
+
+      <section class="panel today-entry">
+        <div class="section-head">
+          <div>
+            <h2>${htmlEscape(todayTitle)}</h2>
+            <p class="muted">${htmlEscape(todayNote)}</p>
+          </div>
+          ${goTodayButton}
+        </div>
+        <div class="grid cards-3">
+          ${todayRows.length ? todayRows.slice(0, 3).map((row) => renderMatchCard(row, true)).join('') : '<div class="empty">暂无今日比赛。</div>'}
+        </div>
+      </section>
+
+      ${renderMiniSection('高置信推荐', highConfidence, '暂无达到高置信阈值的比赛。')}
+      ${renderMiniSection('爆冷预警', upsetAlerts, '暂无高风险爆冷预警。')}
+
+      <section class="panel">
+        <h2>比赛预测</h2>
+        <div class="grid cards-3">
+          ${mainList.length ? mainList.map((row) => renderMatchCard(row, true)).join('') : '<div class="empty">暂无比赛数据。请检查 Supabase 配置或稍后刷新。</div>'}
+        </div>
+      </section>
+
+      <section class="panel data-layer-home">
+        <h2>V10 数据层状态</h2>
+        <p class="muted">该板块已放到首页下方，避免抢占主内容。它只做诊断展示，不做人工编辑。</p>
+        ${renderDataDiagnostics(false)}
+      </section>
+    `;
+  }
+
+  function renderTodayView() {
+    const todayPack = matchesForTodayOrNearest();
+    const rows = sortByBeijing(todayPack.rows);
+    const stats = computeStats(rows);
+    const highConfidence = sortByBeijing(rankMatches(rows).slice(0, 6));
+    const upsetAlerts = sortByBeijing([...rows].sort((a, b) => riskNumber(b) - riskNumber(a)).filter((row) => riskNumber(row) >= 50));
+    const title = todayPack.actualToday ? '今日比赛推荐' : `今日暂无比赛 · ${todayPack.label}`;
+    const note = todayPack.actualToday
+      ? '按北京时间自动筛选今天的比赛，全部按开赛时间排序。'
+      : '当前北京时间今天没有匹配赛程，自动显示最近一个比赛日。';
+
+    views.today.innerHTML = `
+      <section class="panel">
+        <div class="section-head">
+          <div>
+            <h2>${htmlEscape(title)}</h2>
+            <p class="muted">${htmlEscape(note)}</p>
+          </div>
+          <button class="btn mini" type="button" data-jump-tab="schedule" data-apply-date="${htmlEscape(todayPack.key)}">去全部赛程查看</button>
+        </div>
+        ${renderMetrics(stats)}
+      </section>
+
+      ${renderMiniSection('今日高置信推荐', highConfidence, '暂无今日高置信推荐。')}
+      ${renderMiniSection('今日防冷提醒', upsetAlerts, '暂无今日高风险防冷提醒。')}
+
+      <section class="panel">
+        <div class="section-head">
+          <h2>今日全部比赛</h2>
+          <span class="muted">${rows.length} 场 · 北京时间排序</span>
+        </div>
+        <div class="grid cards-2">
+          ${rows.length ? rows.map((row) => renderMatchCard(row, false)).join('') : '<div class="empty">暂无今日比赛。</div>'}
+        </div>
+      </section>
+    `;
+  }
+
+  function dateOptions() {
+    const keys = Array.from(new Set(state.matches.map(dateKey))).sort((a, b) => {
+      if (a === 'unknown') return 1;
+      if (b === 'unknown') return -1;
+      return a.localeCompare(b);
+    });
+    return keys.map((key) => `<option value="${htmlEscape(key)}">${htmlEscape(dateLabel(key))}</option>`).join('');
+  }
+
+  function groupOptions() {
+    const groups = Array.from(new Set(state.matches.map(groupKey))).filter(Boolean).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+    return groups.map((group) => `<option value="${htmlEscape(group)}">${htmlEscape(group)}</option>`).join('');
+  }
+
+  function renderScheduleList() {
+    const rows = filteredMatches().sort((a, b) => sortOrder(a) - sortOrder(b));
+    const container = $('#scheduleCards');
+    if (!container) return;
+    container.innerHTML = rows.length
+      ? rows.map((row) => renderMatchCard(row, false)).join('')
+      : '<div class="empty">没有匹配的赛程。换一个关键词或日期。</div>';
   }
 
   function renderSchedule() {
-    renderSelects();
-    renderStatus();
-    $$('.quick-tab[data-mode]').forEach(btn => btn.classList.toggle('active', btn.dataset.mode === state.activeMode));
-    els.modeTitle.textContent = modeLabel();
-    const base = listForMode();
-    const list = filteredSchedule();
-    const date = state.activeMode === 'today' && base.length ? dateLabelFromKey(dateKey(base[0])) : '全部日期';
-    els.todaySummary.textContent = `${date} · ${base.length} 场 · 北京时间排序`;
+    views.schedule.innerHTML = `
+      <section class="panel filter-panel">
+        <h2>全部赛程</h2>
+        <div class="filters filters-4">
+          <input id="searchInput" class="input" type="search" placeholder="搜索球队、阶段、状态，例如：美国 / 小组赛 / 完赛" value="${htmlEscape(state.search)}" autocomplete="off" />
+          <select id="dateSelect" class="select" aria-label="日期筛选">
+            <option value="all">全部日期</option>
+            ${dateOptions()}
+          </select>
+          <select id="statusSelect" class="select" aria-label="状态筛选">
+            <option value="all">全部状态</option>
+            <option value="upcoming">未开赛</option>
+            <option value="live">进行中</option>
+            <option value="finished">完赛</option>
+          </select>
+          <select id="groupSelect" class="select" aria-label="分组筛选">
+            <option value="all">全部分组</option>
+            ${groupOptions()}
+          </select>
+        </div>
+      </section>
+      <section class="panel">
+        <div id="scheduleCards" class="grid cards-2"></div>
+      </section>
+    `;
 
-    const spotlight = sortByBeijing(base).filter(m => confidenceNum(m) >= 55 || riskScore(m) >= 70).slice(0, 3);
-    els.spotlightGrid.innerHTML = spotlight.length ? spotlight.map(m => renderCard(m, true)).join('') : '<div class="empty">当前模式暂无重点比赛。</div>';
-    els.scheduleGrid.innerHTML = list.length ? list.map(m => renderCard(m)).join('') : '<div class="empty">没有找到符合筛选条件的比赛。</div>';
+    const searchInput = $('#searchInput');
+    const dateSelect = $('#dateSelect');
+    const statusSelect = $('#statusSelect');
+    const groupSelect = $('#groupSelect');
 
-    const risky = sortByBeijing(state.matches).filter(m => riskScore(m) >= 70).slice(0, 8);
-    els.riskCount.textContent = `${risky.length}场`;
-    els.riskList.innerHTML = risky.length ? risky.map(m => rankItem(m, `风险 ${Math.round(riskScore(m))}/100`)).join('') : '<div class="empty">暂无高风险比赛。</div>';
-    const confident = sortByBeijing(state.matches).filter(m => confidenceNum(m) >= 60).sort((a,b) => confidenceNum(b) - confidenceNum(a)).slice(0, 8);
-    els.confidenceCount.textContent = `${confident.length}场`;
-    els.confidenceList.innerHTML = confident.length ? confident.map(m => rankItem(m, `置信度 ${confidence(m)}`)).join('') : '<div class="empty">暂无高置信推荐。</div>';
-    renderStats();
+    dateSelect.value = state.date;
+    statusSelect.value = state.status;
+    groupSelect.value = state.group;
+
+    let isComposing = false;
+
+    searchInput.addEventListener('compositionstart', () => {
+      isComposing = true;
+    });
+
+    searchInput.addEventListener('compositionend', (event) => {
+      isComposing = false;
+      state.search = event.target.value;
+      renderScheduleList();
+    });
+
+    searchInput.addEventListener('input', (event) => {
+      state.search = event.target.value;
+      if (!isComposing) renderScheduleList();
+    });
+
+    dateSelect.addEventListener('change', (event) => {
+      state.date = event.target.value;
+      renderScheduleList();
+    });
+
+    statusSelect.addEventListener('change', (event) => {
+      state.status = event.target.value;
+      renderScheduleList();
+    });
+
+    groupSelect.addEventListener('change', (event) => {
+      state.group = event.target.value;
+      renderScheduleList();
+    });
+
+    renderScheduleList();
   }
 
-  function rankItem(row, right) {
-    return `<div class="rank-item"><div><b>${html(team(row,'home'))} vs ${html(team(row,'away'))}</b><small>${html(stageGroup(row))} · ${html(timeText(row))} · 推荐：${html(recommendation(row))}</small></div><span>${html(right)}</span></div>`;
+  function renderRecommendView() {
+    const futures = futureMatches();
+    const highConfidence = sortByBeijing(rankMatches(futures).filter((row) => confidenceNumber(row) >= 55).slice(0, 9));
+    const coldRows = sortByBeijing([...futures].sort((a, b) => riskNumber(b) - riskNumber(a)).filter((row) => riskNumber(row) >= 50).slice(0, 9));
+    const smallScores = sortByBeijing(futures.filter((row) => predictionPack(row).all.some((s) => ['0:0','1:0','1:1','2:1','0:1'].includes(s))).slice(0, 9));
+    views.recommend.innerHTML = `
+      ${renderMiniSection('高置信推荐', highConfidence, '暂无高置信推荐。')}
+      ${renderMiniSection('防冷提醒', coldRows, '暂无明显防冷场次。')}
+      ${renderMiniSection('小比分观察', smallScores, '暂无小比分观察场次。')}
+    `;
+  }
+
+  function renderComboCard(row) {
+    const pack = predictionPack(row);
+    return `<div class="combo-card"><strong>${htmlEscape(teamName(row, 'home'))} vs ${htmlEscape(teamName(row, 'away'))}</strong><p class="muted">${htmlEscape(formatDateTime(getKickoff(row)))} · ${htmlEscape(getStage(row))}</p><p>推荐：<strong>${htmlEscape(simpleRecommendationText(row))}</strong>；主推 <strong>${htmlEscape(pack.main)}</strong>；防冷 <strong>${htmlEscape(pack.cold)}</strong></p></div>`;
+  }
+
+  function renderComboBlock(title, rows, note) {
+    return `<section class="panel"><h2>${htmlEscape(title)}</h2><p class="muted">${htmlEscape(note)}</p><div class="grid cards-2">${rows.length ? rows.map(renderComboCard).join('') : '<div class="empty">暂无可用场次。</div>'}</div></section>`;
+  }
+
+  function renderComboView() {
+    const futures = futureMatches();
+    const stable = rankMatches(futures).filter((row) => confidenceNumber(row) >= 55 && riskNumber(row) < 80).slice(0, 3);
+    const safe2 = stable.slice(0, 2);
+    const protect = sortByBeijing(futures.filter((row) => riskNumber(row) >= 50 || /平|不败|保护/.test(simpleRecommendationText(row))).slice(0, 3));
+    views.combo.innerHTML = `
+      ${renderComboBlock('稳健 2 串 1', safe2, '优先选择置信度较高、风险不高的两场。')}
+      ${renderComboBlock('进阶 3 串 1', stable, '容错更低，只建议小注观察。')}
+      ${renderComboBlock('防冷保护串', protect, '用于防平局、防弱队爆冷，避免只看热门方向。')}
+    `;
   }
 
   function renderStats() {
-    const total = state.matches.length;
-    const finished = state.matches.filter(m => Boolean(actualScore(m)));
-    const exact = finished.filter(exactHit).length;
-    const dirKnown = finished.filter(m => directionHit(m) !== null);
-    const dirHit = dirKnown.filter(directionHit).length;
-    const exactRate = finished.length ? Math.round(exact / finished.length * 100) : 0;
-    const dirRate = dirKnown.length ? Math.round(dirHit / dirKnown.length * 100) : 0;
-    els.metricsGrid.innerHTML = [
-      ['总比赛', total], ['已完赛', finished.length], ['比分命中率', `${exactRate}%`], ['方向命中率', `${dirRate}%`]
-    ].map(([k,v]) => `<div class="metric"><span>${html(k)}</span><b>${html(v)}</b></div>`).join('');
-    els.reviewList.innerHTML = sortByBeijing(finished).slice(0, 12).map(m => {
-      const actual = actualScore(m);
-      return `<div class="review-row"><b>${html(team(m,'home'))} vs ${html(team(m,'away'))}</b><span>赛后比分：${html(actual.finalScore)}</span><span>比分：${exactHit(m) ? '命中' : '未命中'}</span><span>方向：${directionHit(m) === true ? '命中' : directionHit(m) === false ? '未命中' : '未知'}</span></div>`;
-    }).join('') || '<div class="empty">暂无完赛复盘数据。</div>';
+    const stats = computeStats();
+    views.stats.innerHTML = `
+      <section class="panel">
+        <h2>完赛命中统计</h2>
+        <p class="muted">只统计已有赛后比分的比赛；未完赛不参与命中率分母。</p>
+        ${renderMetrics(stats)}
+      </section>
+      <section class="panel">
+        <h2>统计口径</h2>
+        <div class="data-diagnostics">
+          <div class="code-note">主推比分：每场只取 1 个最高优先级比分。</div>
+          <div class="code-note">备选比分：每场取 2 个，用于覆盖常见小比分变化。</div>
+          <div class="code-note">防冷比分：用于防平局、防弱队爆冷、防低比分波动。</div>
+          <div class="code-note">方向命中：推荐方向与赛果胜平负一致才算命中。</div>
+          <div class="code-note">数据来源：${htmlEscape(state.source === 'remote' ? 'Supabase 实时数据' : state.source)}</div>
+        </div>
+      </section>
+    `;
   }
 
-  function hasConfig() { return Boolean(CONFIG.SUPABASE_URL && CONFIG.SUPABASE_ANON_KEY); }
-  function endpoint() {
+  function renderBacktest() {
+    const played = state.matches.filter((row) => Boolean(scoreResolver(row))).sort((a, b) => sortOrder(a) - sortOrder(b));
+    const rowsHtml = played.map((row) => {
+      const actual = scoreResolver(row);
+      const pack = predictionPack(row);
+      const outcome = predictionOutcome(row);
+      const dHit = directionHit(row);
+      const outcomeText = outcome === 'main' ? '主推命中' : outcome === 'backup' ? '备选命中' : outcome === 'cold' ? '防冷命中' : outcome === 'other' ? '其它比分命中' : '未中';
+      return `
+        <tr>
+          <td>${htmlEscape(formatDateTime(getKickoff(row)))}</td>
+          <td>${htmlEscape(teamName(row, 'home'))} vs ${htmlEscape(teamName(row, 'away'))}</td>
+          <td>${htmlEscape(actual?.finalScore || '-')}</td>
+          <td>主推 ${htmlEscape(pack.main)}；备选 ${htmlEscape(pack.backups.join(' / '))}；防冷 ${htmlEscape(pack.cold)}</td>
+          <td class="${outcome === 'miss' ? 'warn-text' : 'ok-text'}">${htmlEscape(outcomeText)}</td>
+          <td>${dHit === null ? '<span class="muted">字段不足</span>' : (dHit ? '<span class="ok-text">命中</span>' : '<span class="warn-text">未中</span>')}</td>
+          <td>${htmlEscape(simpleRecommendationText(row))}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const historyRows = [
+      ['1:0', '世界杯常见小比分，适合强弱差距不大但一方略占优的比赛'],
+      ['1:1', '平局保护核心比分，小组赛常见'],
+      ['2:1', '热门强队小胜常见比分，也是主推/备选常用结果'],
+      ['0:0', '低节奏、防平、防冷时使用'],
+      ['2:0', '强队稳定控制局面时使用'],
+      ['0:1', '弱队偷袭或客队小胜防冷比分']
+    ].map((row) => `<tr><td>${row[0]}</td><td>${row[1]}</td></tr>`).join('');
+
+    views.backtest.innerHTML = `
+      <section class="panel">
+        <h2>完赛复盘</h2>
+        <p class="muted">只展示已有赛后比分的比赛。没有赛后比分的比赛不会参与命中率计算。</p>
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr><th>北京时间</th><th>比赛</th><th>赛后比分</th><th>赛前推荐</th><th>比分结果</th><th>方向结果</th><th>推荐方向</th></tr>
+            </thead>
+            <tbody>${rowsHtml || '<tr><td colspan="7" class="empty">暂无可回测比赛。</td></tr>'}</tbody>
+          </table>
+        </div>
+      </section>
+      <section class="panel">
+        <h2>历史比分规律参考</h2>
+        <p class="muted">这里只保留可读的经验结论，不堆复杂模型参数。正式命中率仍以当前 Supabase 赛后比分为准。</p>
+        <div class="table-shell">
+          <table>
+            <thead><tr><th>常见比分</th><th>用途</th></tr></thead>
+            <tbody>${historyRows}</tbody>
+          </table>
+        </div>
+      </section>
+    `;
+  }
+
+  function countWhere(predicate) {
+    return state.matches.filter(predicate).length;
+  }
+
+  function renderDataDiagnostics(full = true) {
+    const total = state.matches.length;
+    const hasPostMatch = countWhere((row) => Boolean(parseScore(getData(row)?.postMatchResult?.actualScore)));
+    const hasActual = countWhere((row) => Boolean(parseScore(getData(row)?.actualScore)));
+    const hasFinal = countWhere((row) => Boolean(parseScore(getData(row)?.finalScore)));
+    const hasHomeAway = countWhere((row) => {
+      const home = read(row, ['homeScore', 'home_score'], '');
+      const away = read(row, ['awayScore', 'away_score'], '');
+      return home !== '' && away !== '';
+    });
+    const resolverCount = countWhere((row) => Boolean(scoreResolver(row)));
+    const hasSyncStatus = countWhere((row) => Boolean(read(row, ['resultSyncStatus', 'result_sync_status'], '')));
+    const hasUpdatedAt = countWhere((row) => Boolean(read(row, ['updatedAt', 'updated_at', 'lastUpdated', 'last_updated'], '')));
+    const missingNewFieldsButResolvable = countWhere((row) => Boolean(scoreResolver(row)) && !parseScore(getData(row)?.finalScore));
+
+    const summary = `
+      <div class="grid cards-4">
+        <div class="metric"><div class="label">总记录</div><div class="value">${total}</div><div class="note">matches 表读取数</div></div>
+        <div class="metric"><div class="label">可解析赛果</div><div class="value">${resolverCount}</div><div class="note">scoreResolver 结果</div></div>
+        <div class="metric"><div class="label">finalScore</div><div class="value">${hasFinal}</div><div class="note">V10 新字段</div></div>
+        <div class="metric"><div class="label">字段需回填</div><div class="value">${missingNewFieldsButResolvable}</div><div class="note">有旧赛果但缺 finalScore</div></div>
+      </div>
+      <div class="data-diagnostics" style="margin-top:14px">
+        <div class="code-note">postMatchResult.actualScore：${hasPostMatch}/${total}</div>
+        <div class="code-note">actualScore：${hasActual}/${total}</div>
+        <div class="code-note">homeScore + awayScore：${hasHomeAway}/${total}</div>
+        <div class="code-note">resultSyncStatus：${hasSyncStatus}/${total}</div>
+        <div class="code-note">updatedAt / lastUpdated：${hasUpdatedAt}/${total}</div>
+        <div class="code-note">数据来源：${htmlEscape(state.source)}；最后加载：${state.lastLoadedAt ? htmlEscape(state.lastLoadedAt.toLocaleString('zh-CN')) : '-'}</div>
+      </div>
+    `;
+
+    if (!full) return summary;
+
+    return `
+      ${summary}
+      <section class="panel" style="margin-top:18px">
+        <h3>字段读取优先级</h3>
+        <div class="code-note">data.postMatchResult.actualScore → data.actualScore → data.finalScore → data.homeScore + ':' + data.awayScore</div>
+      </section>
+    `;
+  }
+
+  function renderDataView() {
+    views.data.innerHTML = `
+      <section class="panel">
+        <h2>V10 数据层状态</h2>
+        <p class="muted">该页面只读诊断，不写入 Supabase，不做人工编辑预测。</p>
+        ${renderDataDiagnostics(true)}
+      </section>
+    `;
+  }
+
+  function renderAll() {
+    renderTodayView();
+    renderSchedule();
+    renderRecommendView();
+    renderComboView();
+    renderStats();
+    renderBacktest();
+    renderDataView();
+    updateStatusBar();
+  }
+
+  function updateStatusBar() {
+    const count = state.matches.length;
+    const sourceText = state.source === 'remote' ? 'Supabase 实时数据' : (state.source === 'cache' ? '本地缓存' : (state.source === 'demo' ? '演示数据' : state.source));
+    const time = state.lastLoadedAt ? state.lastLoadedAt.toLocaleString('zh-CN') : '-';
+    const errorText = state.error ? `；错误：${state.error}` : '';
+    statusBar.textContent = `${VERSION} · 当前 ${count} 场 · 来源：${sourceText} · 更新时间：${time}${errorText}`;
+  }
+
+  function setActiveTab(tab) {
+    state.activeTab = tab;
+    $$('.tab').forEach((button) => button.classList.toggle('active', button.dataset.tab === tab));
+    Object.entries(views).forEach(([key, el]) => { if (el) el.classList.toggle('active', key === tab); });
+  }
+
+  function getCachedMatches() {
+    try {
+      const raw = localStorage.getItem(CACHE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function setCachedMatches(matches) {
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify(matches));
+      localStorage.setItem(CACHE_TIME_KEY, String(Date.now()));
+    } catch (_) {
+      // localStorage may be full or disabled. Ignore silently.
+    }
+  }
+
+  function isConfigured() {
+    return Boolean(CONFIG.SUPABASE_URL && CONFIG.SUPABASE_ANON_KEY);
+  }
+
+  function buildSupabaseUrl() {
     const base = String(CONFIG.SUPABASE_URL || '').replace(/\/$/, '');
     const table = encodeURIComponent(CONFIG.SUPABASE_TABLE || 'matches');
     const limit = Number(CONFIG.FETCH_LIMIT || 500);
     return `${base}/rest/v1/${table}?select=*&order=id.asc&limit=${limit}`;
   }
-  function timeoutFetch(url, options, ms) {
+
+  async function fetchRemoteMatches() {
+    if (!isConfigured()) throw new Error('未配置 Supabase URL / anon key');
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), ms);
-    return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
-  }
-  async function fetchRemote() {
-    if (!hasConfig()) throw new Error('未配置 Supabase URL / anon key');
-    const res = await timeoutFetch(endpoint(), {
-      headers: { apikey: CONFIG.SUPABASE_ANON_KEY, Authorization: `Bearer ${CONFIG.SUPABASE_ANON_KEY}`, Accept: 'application/json' }
-    }, Number(CONFIG.REQUEST_TIMEOUT_MS || 10000));
-    if (!res.ok) throw new Error(`Supabase 请求失败 ${res.status}`);
-    const rows = await res.json();
-    if (!Array.isArray(rows)) throw new Error('Supabase 返回格式异常');
-    return normalizeRows(rows);
-  }
-  function saveCache(rows) {
-    try { localStorage.setItem(CACHE_KEY, JSON.stringify(rows)); localStorage.setItem(CACHE_TIME_KEY, new Date().toISOString()); } catch (_) {}
-  }
-  function readCache() {
-    try { const raw = localStorage.getItem(CACHE_KEY); return raw ? JSON.parse(raw) : null; } catch (_) { return null; }
-  }
-  function timeStamp() {
-    const p = bjParts(new Date());
-    return p ? `${p.y}/${p.m}/${p.d} ${p.h}:${p.min}` : new Date().toLocaleString('zh-CN');
-  }
-  async function load(force = false) {
-    state.loading = true;
-    state.error = null;
-    renderStatus();
+    const timeout = window.setTimeout(() => controller.abort(), CONFIG.REQUEST_TIMEOUT_MS || 10000);
     try {
-      const rows = await fetchRemote();
-      state.matches = sortByBeijing(rows);
-      state.source = 'Supabase 实时数据';
-      state.lastLoadedAt = timeStamp();
-      saveCache(state.matches);
-    } catch (e) {
-      state.error = e?.name === 'AbortError' ? '请求超时，已切换缓存' : (e?.message || '数据请求失败');
-      const cached = readCache();
-      if (cached && cached.length) { state.matches = normalizeRows(cached); state.source = '本地缓存'; }
-      else { state.matches = normalizeRows(demoMatches); state.source = '演示数据'; }
-      state.lastLoadedAt = timeStamp();
+      const response = await fetch(buildSupabaseUrl(), {
+        method: 'GET',
+        headers: {
+          apikey: CONFIG.SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${CONFIG.SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        signal: controller.signal
+      });
+      if (!response.ok) throw new Error(`Supabase HTTP ${response.status}`);
+      const json = await response.json();
+      if (!Array.isArray(json)) throw new Error('Supabase 返回格式不是数组');
+      return json;
     } finally {
-      state.loading = false;
-      renderSchedule();
+      window.clearTimeout(timeout);
     }
   }
 
-  function bind() {
-    els.refreshBtn.addEventListener('click', () => load(true));
-    els.clearCacheBtn.addEventListener('click', () => { try { localStorage.removeItem(CACHE_KEY); localStorage.removeItem(CACHE_TIME_KEY); } catch (_) {} load(true); });
-    $$('.quick-tab[data-mode]').forEach(btn => btn.addEventListener('click', () => { state.activeMode = btn.dataset.mode; state.date = 'all'; renderSchedule(); document.getElementById('scheduleSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }));
-    els.searchInput.addEventListener('input', (e) => { state.search = e.target.value; renderSchedule(); els.searchInput.focus(); });
-    els.dateFilter.addEventListener('change', (e) => { state.date = e.target.value; renderSchedule(); });
-    els.statusFilter.addEventListener('change', (e) => { state.status = e.target.value; renderSchedule(); });
-    els.groupFilter.addEventListener('change', (e) => { state.group = e.target.value; renderSchedule(); });
-    els.dateStrip.addEventListener('click', (e) => { const b = e.target.closest('[data-date]'); if (!b) return; state.date = b.dataset.date; renderSchedule(); });
+  function applyMatches(matches, source) {
+    state.matches = [...matches].sort((a, b) => sortOrder(a) - sortOrder(b));
+    state.source = source;
+    state.lastLoadedAt = new Date();
+    state.error = null;
+    renderAll();
   }
-  document.addEventListener('DOMContentLoaded', () => { bind(); load(false); });
-})();
 
+  async function loadMatches({ force = false } = {}) {
+    if (state.loading && state.dataPromise) return state.dataPromise;
+    state.loading = true;
+
+    const cached = getCachedMatches();
+    if (!force && cached && cached.length) {
+      applyMatches(cached, 'cache');
+    }
+
+    state.dataPromise = (async () => {
+      try {
+        const remote = await fetchRemoteMatches();
+        applyMatches(remote, 'remote');
+        setCachedMatches(remote);
+      } catch (error) {
+        const message = error.name === 'AbortError' ? '请求超时，已切换缓存' : error.message;
+        state.error = message;
+        const fallbackCache = cached || getCachedMatches();
+        if (fallbackCache && fallbackCache.length) {
+          applyMatches(fallbackCache, 'cache');
+          state.error = message;
+          updateStatusBar();
+        } else if (CONFIG.USE_DEMO_WHEN_NOT_CONFIGURED) {
+          applyMatches(demoMatches, 'demo');
+          state.error = message;
+          updateStatusBar();
+        } else {
+          state.matches = [];
+          state.source = 'empty';
+          state.lastLoadedAt = new Date();
+          renderAll();
+          state.error = message;
+          updateStatusBar();
+        }
+      } finally {
+        state.loading = false;
+        state.dataPromise = null;
+      }
+    })();
+
+    return state.dataPromise;
+  }
+
+  function clearCache() {
+    localStorage.removeItem(CACHE_KEY);
+    localStorage.removeItem(CACHE_TIME_KEY);
+    state.error = '本地缓存已清理';
+    updateStatusBar();
+  }
+
+  function bindEvents() {
+    $$('.tab').forEach((button) => {
+      button.addEventListener('click', () => setActiveTab(button.dataset.tab));
+    });
+    document.addEventListener('click', (event) => {
+      const detail = event.target.closest('[data-detail-id]');
+      if (detail) {
+        const row = state.matches.find((item) => String(getMatchId(item)) === String(detail.dataset.detailId));
+        if (row) openMatchDetail(row);
+        return;
+      }
+      const copy = event.target.closest('[data-copy-id]');
+      if (copy) {
+        const row = state.matches.find((item) => String(getMatchId(item)) === String(copy.dataset.copyId));
+        if (row) copyRecommendation(row);
+        return;
+      }
+      if (event.target.closest('#closeDialogBtn')) {
+        const dialog = $('#matchDialog');
+        if (dialog?.close) dialog.close();
+        else dialog?.removeAttribute('open');
+        return;
+      }
+      const button = event.target.closest('[data-jump-tab]');
+      if (!button) return;
+      const targetTab = button.dataset.jumpTab;
+      const applyDate = button.dataset.applyDate;
+      if (applyDate) state.date = applyDate;
+      setActiveTab(targetTab);
+      if (targetTab === 'schedule') renderSchedule();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+    $('#refreshBtn').addEventListener('click', () => loadMatches({ force: true }));
+    $('#clearCacheBtn').addEventListener('click', clearCache);
+  }
+
+  function boot() {
+    document.title = CONFIG.TITLE || '2026FIFA世界杯预测';
+    bindEvents();
+    renderAll();
+    loadMatches();
+    const refreshMs = Number(CONFIG.AUTO_REFRESH_MS || 0);
+    if (refreshMs > 0) {
+      window.setInterval(() => loadMatches({ force: true }), refreshMs);
+    }
+  }
+
+  boot();
+})();
