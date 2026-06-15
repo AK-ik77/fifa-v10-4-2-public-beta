@@ -3,115 +3,62 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#07111f" />
+  <meta name="description" content="2026FIFA世界杯预测 V10.4.2 公测版：赛程、预测、赛果、命中统计。" />
   <title>2026FIFA世界杯预测</title>
   <link rel="stylesheet" href="assets/css/style.css" />
 </head>
 <body>
-  <div class="site-shell">
-    <header class="hero">
-      <div class="hero-main">
-        <div class="version-line">V10.4.2 · 公测版 · 自动学习校准 + 多专家推演</div>
-        <h1>2026FIFA世界杯预测</h1>
-        <p class="hero-subtitle">按比赛日期和北京时间顺序展示赛程；方向判断优先，精准比分降级为主推/备选/防冷参考，避免把单点比分包装成强结论。</p>
-        <div class="hero-actions">
-          <button class="btn primary" id="refreshBtn" type="button">刷新数据</button>
-          <button class="btn ghost" id="clearCacheBtn" type="button">清理缓存</button>
-          <a class="btn link" href="#scheduleSection">查看比赛</a>
-          <a class="btn link" href="#statsSection">命中率数据</a>
+  <div id="app" class="app-shell">
+    <header class="site-header">
+      <div class="brand-block">
+        <div class="brand-logo" aria-label="IK logo">ik</div>
+        <div>
+          <div class="eyebrow">Public Beta · V10.4.2 公测版</div>
+          <h1>2026FIFA世界杯预测</h1>
+          <p class="subhead">主推比分 + 备选比分 + 防冷提醒 + 串关推荐。预测结果自动读取，不允许人工改写。</p>
         </div>
       </div>
-      <aside class="brand-card" aria-label="站点品牌">
-        <div class="ik-logo">ik</div>
-        <div class="brand-title">created by ik</div>
-      </aside>
+      <div class="header-actions">
+        <button id="refreshBtn" class="btn primary" type="button">刷新数据</button>
+        <button id="clearCacheBtn" class="btn ghost" type="button">清理缓存</button>
+      </div>
     </header>
 
-    <div id="statusBar" class="status-bar">正在初始化...</div>
-
-    <nav class="quick-nav" aria-label="页面导航">
-      <button class="quick-tab active" type="button" data-mode="today">今日比赛</button>
-      <button class="quick-tab" type="button" data-mode="all">全部赛程</button>
-      <button class="quick-tab" type="button" data-mode="upcoming">未开赛</button>
-      <button class="quick-tab" type="button" data-mode="finished">已完赛</button>
-      <button class="quick-tab" type="button" data-mode="risk">爆冷风险高</button>
-      <a class="quick-tab anchor" href="#statsSection">命中率数据</a>
-      <a class="quick-tab anchor" href="#methodSection">数据与模型</a>
+    <nav class="tabs" aria-label="主导航">
+      <button class="tab active" data-tab="today" type="button">今日比赛</button>
+      <button class="tab" data-tab="schedule" type="button">全部赛程</button>
+      <button class="tab" data-tab="recommend" type="button">推荐中心</button>
+      <button class="tab" data-tab="combo" type="button">串关推荐</button>
+      <button class="tab" data-tab="stats" type="button">命中统计</button>
+      <button class="tab" data-tab="backtest" type="button">历史回测</button>
+      <button class="tab" data-tab="data" type="button">V10数据层</button>
     </nav>
 
     <main>
-      <section class="panel today-panel" id="todayPanel">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Today</p>
-            <h2 id="modeTitle">今日比赛推荐</h2>
-          </div>
-          <div class="today-summary" id="todaySummary">正在读取比赛...</div>
-        </div>
-        <div class="spotlight-grid" id="spotlightGrid"></div>
-      </section>
+      <section id="statusBar" class="status-bar" aria-live="polite">正在初始化...</section>
 
-      <section class="panel" id="scheduleSection">
-        <div class="section-head compact">
-          <div>
-            <p class="eyebrow">Schedule</p>
-            <h2>按北京时间查看赛程</h2>
-          </div>
-        </div>
-
-        <div class="date-strip" id="dateStrip" aria-label="日期快捷筛选"></div>
-
-        <div class="search-panel">
-          <input id="searchInput" type="search" autocomplete="off" placeholder="搜索球队、阶段、状态，例如：美国 / 小组赛 / 完赛" />
-          <select id="dateFilter" aria-label="按日期筛选"><option value="all">全部日期</option></select>
-          <select id="statusFilter" aria-label="按状态筛选">
-            <option value="all">全部状态</option>
-            <option value="upcoming">未开赛</option>
-            <option value="finished">已完赛</option>
-            <option value="live">进行中</option>
-          </select>
-          <select id="groupFilter" aria-label="按分组筛选"><option value="all">全部分组</option></select>
-        </div>
-
-        <div class="schedule-grid" id="scheduleGrid"></div>
-      </section>
-
-      <section class="dashboard-grid">
-        <article class="panel small-panel">
-          <div class="section-head compact"><h2>爆冷风险榜</h2><span id="riskCount" class="count-pill">0场</span></div>
-          <div id="riskList" class="rank-list"></div>
-        </article>
-        <article class="panel small-panel">
-          <div class="section-head compact"><h2>高置信推荐</h2><span id="confidenceCount" class="count-pill">0场</span></div>
-          <div id="confidenceList" class="rank-list"></div>
-        </article>
-      </section>
-
-      <section class="panel" id="statsSection">
-        <div class="section-head compact">
-          <div>
-            <p class="eyebrow">Accuracy</p>
-            <h2>命中率数据</h2>
-          </div>
-        </div>
-        <div class="metric-grid" id="metricsGrid"></div>
-        <div class="review-list" id="reviewList"></div>
-      </section>
-
-      <section class="panel" id="methodSection">
-        <div class="section-head compact">
-          <div>
-            <p class="eyebrow">Data & Method</p>
-            <h2>市场复盘、数据源与模型方法</h2>
-          </div>
-        </div>
-        <div class="method-grid" id="methodGrid">
-          <div class="method-card"><b>数据源状态</b><p>优先读取 Supabase 实时数据；失败时才使用本地缓存或演示数据。</p></div>
-          <div class="method-card"><b>模型展示原则</b><p>方向判断优先，比分作为概率参考；不把单点比分包装成确定结论。</p></div>
-          <div class="method-card"><b>完赛回填</b><p>兼容 actualScore、finalScore、postMatchResult.actualScore、homeScore / awayScore。</p></div>
-        </div>
-      </section>
+      <section id="todayView" class="view active"></section>
+      <section id="scheduleView" class="view"></section>
+      <section id="recommendView" class="view"></section>
+      <section id="comboView" class="view"></section>
+      <section id="statsView" class="view"></section>
+      <section id="backtestView" class="view"></section>
+      <section id="dataView" class="view"></section>
     </main>
+
+    <dialog id="matchDialog" class="match-dialog">
+      <div class="dialog-head">
+        <strong id="dialogTitle">详情分析</strong>
+        <button id="closeDialogBtn" class="dialog-close" type="button" aria-label="关闭">×</button>
+      </div>
+      <div id="dialogBody" class="dialog-body"></div>
+    </dialog>
+
+    <footer class="site-footer">
+      <span>V10.4.2 公测版</span>
+      <span>Netlify 静态部署</span>
+      <span>Supabase anon key 只读</span>
+    </footer>
   </div>
 
   <script src="assets/js/config.js"></script>
