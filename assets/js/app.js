@@ -3,8 +3,8 @@
 
   const CONFIG = window.FIFA_CONFIG || {};
   const VERSION = CONFIG.VERSION || 'V10.4.2 公测版';
-  const CACHE_KEY = 'fifa_world_cup_predictor_v10_4_2_matches_cache';
-  const CACHE_TIME_KEY = 'fifa_world_cup_predictor_v10_4_2_matches_cache_time';
+  const CACHE_KEY = 'fifa_world_cup_predictor_v10_4_2_enhanced_matches_cache';
+  const CACHE_TIME_KEY = 'fifa_world_cup_predictor_v10_4_2_enhanced_matches_cache_time';
 
   const state = {
     matches: [],
@@ -14,6 +14,7 @@
     search: '',
     date: 'all',
     status: 'all',
+    group: 'all',
     lastLoadedAt: null,
     error: null,
     dataPromise: null
@@ -24,6 +25,7 @@
 
   const views = {
     home: $('#homeView'),
+    today: $('#todayView'),
     schedule: $('#scheduleView'),
     stats: $('#statsView'),
     backtest: $('#backtestView'),
@@ -36,7 +38,7 @@
     {
       id: 620001,
       data: {
-        homeCn: '墨西哥', awayCn: '南非', status: '赛后', stage: '小组赛', group: 'A组', kickoff: '2026-06-11T19:00:00Z',
+        homeCn: '墨西哥', awayCn: '南非', status: '完赛', stage: '小组赛', group: 'A组', kickoff: '2026-06-11T19:00:00Z',
         predictions: ['1:0', '1:1', '2:1'], recommendation: '主胜或平', risk: '中', confidence: 62,
         postMatchResult: { actualScore: '2:0' }, actualScore: '2:0'
       }
@@ -44,7 +46,7 @@
     {
       id: 620002,
       data: {
-        homeCn: '韩国', awayCn: '捷克', status: '赛后', stage: '小组赛', group: 'B组', kickoff: '2026-06-12T22:00:00Z',
+        homeCn: '韩国', awayCn: '捷克', status: '完赛', stage: '小组赛', group: 'B组', kickoff: '2026-06-12T22:00:00Z',
         topScores: ['1:1', '2:1', '0:0'], recommendation: '平局保护', risk: '高', confidence: 54,
         actualScore: '2:1'
       }
@@ -59,7 +61,7 @@
     {
       id: 620025,
       data: {
-        homeCn: '德国', awayCn: '巴拉圭', status: '赛后', stage: '小组赛', group: 'D组', kickoff: '2026-06-19T19:00:00Z',
+        homeCn: '德国', awayCn: '巴拉圭', status: '完赛', stage: '小组赛', group: 'D组', kickoff: '2026-06-19T19:00:00Z',
         primaryScores: ['2:0', '2:1', '1:0'], recommendation: '主胜', risk: '低', confidence: 71,
         finalScore: '7:1', homeScore: 7, awayScore: 1, resultSyncStatus: 'synced'
       }
@@ -196,45 +198,214 @@
   }
 
   function getStage(row) {
-    const stage = read(row, ['stageCn', 'stage', 'round', 'phase'], '');
-    const group = read(row, ['groupCn', 'group', 'groupName'], '');
+    const stage = stripMatchCode(read(row, ['stageCn', 'stage', 'round', 'phase', 'roundName'], ''));
+    const group = stripMatchCode(read(row, ['groupCn', 'group', 'groupName', 'pool'], ''));
     return [stage, group].filter(Boolean).join(' · ') || '赛程';
+  }
+
+  function groupKey(row) {
+    const group = stripMatchCode(read(row, ['groupCn', 'group', 'groupName', 'pool'], '')).trim();
+    return group || '未分组';
+  }
+
+  function stripMatchCode(text) {
+    return compactText(text, '')
+      .replace(/\s*[·｜|\-–—]*\s*#?\d{5,}\b/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function beijingParts(date) {
+    if (!date || Number.isNaN(date.getTime())) return null;
+    try {
+      const parts = new Intl.DateTimeFormat('zh-CN', {
+        timeZone: 'Asia/Shanghai',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', hour12: false
+      }).formatToParts(date).reduce((acc, part) => {
+        if (part.type !== 'literal') acc[part.type] = part.value;
+        return acc;
+      }, {});
+      return parts;
+    } catch (_) {
+      const shifted = new Date(date.getTime() + 8 * 60 * 60 * 1000);
+      return {
+        year: String(shifted.getUTCFullYear()),
+        month: String(shifted.getUTCMonth() + 1).padStart(2, '0'),
+        day: String(shifted.getUTCDate()).padStart(2, '0'),
+        hour: String(shifted.getUTCHours()).padStart(2, '0'),
+        minute: String(shifted.getUTCMinutes()).padStart(2, '0')
+      };
+    }
+  }
+
+  function beijingDateKey(date) {
+    const parts = beijingParts(date);
+    return parts ? `${parts.year}-${parts.month}-${parts.day}` : 'unknown';
+  }
+
+  function parseDateWithOffset(text) {
+    const m = String(text).match(/(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(?:UTC|GMT)\s*([+-])\s*(\d{1,2})(?::?(\d{2}))?/i);
+    if (!m) return null;
+    const sign = m[7] === '-' ? -1 : 1;
+    const offsetMinutes = sign * (Number(m[8]) * 60 + Number(m[9] || 0));
+    const utcMs = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6] || 0)) - offsetMinutes * 60000;
+    const date = new Date(utcMs);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  function pickDateValue(value) {
+    if (value === null || value === undefined || value === '') return '';
+    if (value instanceof Date) return value;
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const picked = pickDateValue(item);
+        if (picked) return picked;
+      }
+      return '';
+    }
+    if (isPlainObject(value)) {
+      const keys = ['beijingTime', 'beijingDateTime', 'beijingDatetime', 'beijing', 'bjTime', 'bj_time', 'bjt', 'iso', 'utc', 'utcTime', 'utcDate', 'localTime', 'datetime', 'dateTime', 'date', 'time', 'kickoff', 'startTime', 'displayTime', 'timeText', 'matchTimeText', 'value', 'text'];
+      for (const key of keys) {
+        if (Object.prototype.hasOwnProperty.call(value, key)) {
+          const picked = pickDateValue(value[key]);
+          if (picked) return picked;
+        }
+      }
+    }
+    return '';
+  }
+
+  function parseDateValue(value) {
+    const picked = pickDateValue(value);
+    if (!picked) return null;
+    if (picked instanceof Date && !Number.isNaN(picked.getTime())) return picked;
+    if (typeof picked === 'number') {
+      const ms = picked < 10000000000 ? picked * 1000 : picked;
+      const date = new Date(ms);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+    let text = String(picked).trim();
+    if (!text || /^时间待定|tbd|待定|unknown$/i.test(text)) return null;
+
+    // 优先读取字符串中的“北京时间：YYYY-MM-DD HH:mm”。这种字段应按 UTC+8 解释，避免手机/PC 时区差异。
+    const bj = text.match(/(?:北京时间|北京|BJT|China\s*Time)\s*[:：]?\s*(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})日?\s*(\d{1,2}):(\d{2})(?::(\d{2}))?/i);
+    if (bj) {
+      const utcMs = Date.UTC(Number(bj[1]), Number(bj[2]) - 1, Number(bj[3]), Number(bj[4]) - 8, Number(bj[5]), Number(bj[6] || 0));
+      const date = new Date(utcMs);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    const offsetDate = parseDateWithOffset(text);
+    if (offsetDate) return offsetDate;
+
+    text = text
+      .replace(/[年/]/g, '-')
+      .replace(/[月]/g, '-')
+      .replace(/[日]/g, '')
+      .replace(/\s+UTC\s*([+-])\s*(\d{1,2})(?!:)/i, ' GMT$1$2:00')
+      .replace(/\s+UTC\s*([+-])\s*(\d{1,2}):(\d{2})/i, ' GMT$1$2:$3');
+    let date = new Date(text);
+    if (!Number.isNaN(date.getTime())) return date;
+
+    const ymd = text.match(/(20\d{2})[-.](\d{1,2})[-.](\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?/);
+    if (ymd) {
+      // 无时区字符串默认按北京时间解释。
+      const utcMs = Date.UTC(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]), Number(ymd[4] || 0) - 8, Number(ymd[5] || 0));
+      date = new Date(utcMs);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+    const md = text.match(/(\d{1,2})[-/月](\d{1,2})(?:日)?(?:\s*(\d{1,2}):(\d{2}))?/);
+    if (md) {
+      const utcMs = Date.UTC(2026, Number(md[1]) - 1, Number(md[2]), Number(md[3] || 0) - 8, Number(md[4] || 0));
+      date = new Date(utcMs);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+    return null;
   }
 
   function getKickoff(row) {
     const raw = read(row, [
-      'kickoff', 'kickoffAt', 'kickoff_at', 'date', 'matchDate', 'utcDate', 'time', 'startTime', 'start_at'
+      'kickoff', 'kickoffAt', 'kickoff_at', 'startTime', 'start_time', 'startAt', 'start_at',
+      'matchTime', 'match_time', 'matchDate', 'match_date', 'date', 'datetime', 'dateTime',
+      'utcDate', 'utc_date', 'utcTime', 'utc_time', 'localTime', 'local_time', 'beijingTime',
+      'beijing_time', 'beijingDateTime', 'beijing_datetime', 'kickoffBeijing', 'kickoff_beijing', 'bjTime', 'bj_time', 'time', 'timeText', 'matchTimeText', 'displayTime', 'fixture.date', 'fixture.timestamp',
+      'schedule.kickoff', 'schedule.date', 'schedule.time', 'schedule.beijingTime', 'eventDate', 'event_time'
     ], '');
-    if (!raw) return null;
-    const date = new Date(raw);
-    if (!Number.isNaN(date.getTime())) return date;
-    return null;
+    return parseDateValue(raw);
+  }
+
+  function localDateKey(date) {
+    if (!date) return 'unknown';
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  function dateLabel(key) {
+    if (key === 'unknown') return '时间待定';
+    const m = String(key).match(/^(20\d{2})-(\d{2})-(\d{2})$/);
+    if (!m) return key;
+    const date = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 0, 0));
+    const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][date.getUTCDay()];
+    return `${m[2]}/${m[3]} ${week}`;
   }
 
   function formatDateTime(date) {
     if (!date) return '时间待定';
-    try {
-      return new Intl.DateTimeFormat('zh-CN', {
-        month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
-      }).format(date);
-    } catch (_) {
-      return date.toISOString().slice(0, 16).replace('T', ' ');
-    }
+    const parts = beijingParts(date);
+    if (!parts) return '时间待定';
+    return `北京时间 ${parts.month}/${parts.day} ${parts.hour}:${parts.minute}`;
   }
 
   function dateKey(row) {
     const date = getKickoff(row);
     if (!date) return 'unknown';
-    return date.toISOString().slice(0, 10);
+    return beijingDateKey(date);
   }
 
   function sortOrder(row) {
-    const order = Number(read(row, ['sortOrder', 'sort_order', 'order', 'matchNo', 'match_no'], NaN));
-    if (Number.isFinite(order)) return order;
     const date = getKickoff(row);
     if (date) return date.getTime();
+    const order = Number(read(row, ['sortOrder', 'sort_order', 'order', 'matchNo', 'match_no'], NaN));
+    if (Number.isFinite(order)) return 9000000000000 + order;
     const id = Number(getMatchId(row));
-    return Number.isFinite(id) ? id : 999999999;
+    return Number.isFinite(id) ? 9000000000000 + id : 9999999999999;
+  }
+
+  function sortByBeijing(rows) {
+    return [...rows].sort((a, b) => sortOrder(a) - sortOrder(b));
+  }
+
+  function todayKeyBeijing() {
+    return beijingDateKey(new Date());
+  }
+
+  function todayMatches() {
+    const key = todayKeyBeijing();
+    return sortByBeijing(state.matches.filter((row) => dateKey(row) === key));
+  }
+
+  function nearestFutureDateKey() {
+    const now = Date.now();
+    const candidates = sortByBeijing(state.matches.filter((row) => {
+      const kickoff = getKickoff(row);
+      return kickoff && kickoff.getTime() >= now;
+    }));
+    return candidates.length ? dateKey(candidates[0]) : null;
+  }
+
+  function matchesForTodayOrNearest() {
+    const todayRows = todayMatches();
+    if (todayRows.length) return { rows: todayRows, label: '今日比赛', actualToday: true, key: todayKeyBeijing() };
+    const nearestKey = nearestFutureDateKey();
+    if (nearestKey) {
+      return { rows: sortByBeijing(state.matches.filter((row) => dateKey(row) === nearestKey)), label: `${dateLabel(nearestKey)} 比赛`, actualToday: false, key: nearestKey };
+    }
+    return { rows: [], label: '今日比赛', actualToday: true, key: todayKeyBeijing() };
   }
 
   function scoreResolver(row) {
@@ -271,7 +442,7 @@
     const actual = scoreResolver(row);
     if (actual) return true;
     const status = getRawStatus(row);
-    return /赛后|完赛|已结束|finished|fulltime|ft/i.test(status);
+    return /赛后|完赛|已结束|结束|finished|fulltime|full_time|ft/i.test(status);
   }
 
   function isLive(row) {
@@ -280,7 +451,7 @@
   }
 
   function displayStatus(row) {
-    if (isFinished(row)) return '赛后';
+    if (isFinished(row)) return '完赛';
     if (isLive(row)) return '进行中';
     const status = getRawStatus(row);
     return status || '未开赛';
@@ -306,8 +477,22 @@
   }
 
   function getConfidence(row) {
-    const value = read(row, ['confidence', 'modelConfidence', 'favoriteProb', 'winConfidence', 'confidenceText'], '');
+    const value = read(row, ['confidence', 'confidenceScore', 'modelConfidence', 'favoriteProb', 'winConfidence', 'confidenceText', 'model.confidence', 'prediction.confidence'], '');
     return percentText(value);
+  }
+
+  function confidenceNumber(row) {
+    const text = getConfidence(row);
+    const numeric = Number(String(text).replace('%', '').trim());
+    return Number.isFinite(numeric) ? numeric : 0;
+  }
+
+  function riskNumber(row) {
+    const text = getRisk(row);
+    if (/高|danger|high/i.test(text)) return 90;
+    if (/低|safe|low/i.test(text)) return 20;
+    const numeric = Number(String(text).replace(/[^0-9.]/g, ''));
+    return Number.isFinite(numeric) ? numeric : 50;
   }
 
   function flattenScores(input, output = []) {
@@ -421,9 +606,12 @@
     const actualDirection = resultDirectionFromScore(actual);
     const rec = recommendation(row);
     if (!actualDirection || !rec || rec === '暂无') return null;
-    if (actualDirection === '平') return /平|draw|x/i.test(rec);
-    if (actualDirection === '主胜') return /主胜|主队|home|1/i.test(rec) || /主.*不败/.test(rec);
-    if (actualDirection === '客胜') return /客胜|客队|away|2/i.test(rec) || /客.*不败/.test(rec);
+    const text = String(rec).toLowerCase();
+    const homeNoLose = /主队?不败|主不败|主胜或平|主平|1x|home\s*or\s*draw/.test(text);
+    const awayNoLose = /客队?不败|客不败|客胜或平|客平|x2|away\s*or\s*draw/.test(text);
+    if (actualDirection === '平') return /平|draw|x/.test(text) || homeNoLose || awayNoLose;
+    if (actualDirection === '主胜') return /主胜|主推主|home|1/.test(text) || homeNoLose;
+    if (actualDirection === '客胜') return /客胜|客推客|away|2/.test(text) || awayNoLose;
     return null;
   }
 
@@ -442,9 +630,11 @@
         if (state.status === 'upcoming' && isFinished(row)) return false;
         if (state.status === 'live' && !isLive(row)) return false;
       }
+      if (state.group !== 'all' && groupKey(row) !== state.group) return false;
       if (!keyword) return true;
       const haystack = [
-        teamName(row, 'home'), teamName(row, 'away'), getStage(row), displayStatus(row), recommendation(row), getMatchId(row)
+        teamName(row, 'home'), teamName(row, 'away'), getStage(row), groupKey(row), displayStatus(row),
+        recommendation(row), getMatchId(row), formatDateTime(getKickoff(row)), probabilitySummary(row), modelSummary(row)
       ].join(' ').toLowerCase();
       return haystack.includes(keyword);
     });
@@ -492,10 +682,10 @@
     const model = modelSummary(row);
     const learning = learningSummary(row);
     return `
-      <article class="match-card ${compact ? 'compact' : ''}">
+      <article class="match-card ${compact ? 'compact' : ''} ${isFinished(row) ? 'finished-card' : ''}">
         <div class="match-top">
           <div>
-            <div class="stage">${htmlEscape(getStage(row))} · #${htmlEscape(getMatchId(row) || '-')}</div>
+            <div class="stage">${htmlEscape(getStage(row))}</div>
             <div class="muted">${htmlEscape(formatDateTime(kickoff))}</div>
           </div>
           ${statusPill(row)}
@@ -529,7 +719,7 @@
   function renderMetrics(stats) {
     return `
       <div class="grid cards-4">
-        <div class="metric"><div class="label">总比赛</div><div class="value">${stats.total}</div><div class="note">全部赛程 fallback 展示</div></div>
+        <div class="metric"><div class="label">总比赛</div><div class="value">${stats.total}</div><div class="note">按北京时间排序</div></div>
         <div class="metric"><div class="label">已有赛果</div><div class="value">${stats.withActual}</div><div class="note">兼容 actualScore / finalScore</div></div>
         <div class="metric"><div class="label">比分命中率</div><div class="value">${Math.round(stats.exactHitRate * 100)}%</div><div class="note">${stats.exactHits}/${stats.withActual}</div></div>
         <div class="metric"><div class="label">方向命中率</div><div class="value">${Math.round(stats.directionHitRate * 100)}%</div><div class="note">${stats.directionHits}/${stats.directionCandidates}</div></div>
@@ -537,25 +727,78 @@
     `;
   }
 
+  function rankMatches(rows) {
+    return [...rows].sort((a, b) => {
+      const conf = confidenceNumber(b) - confidenceNumber(a);
+      if (conf) return conf;
+      return sortOrder(a) - sortOrder(b);
+    });
+  }
+
+  function futureMatches() {
+    return sortByBeijing(state.matches.filter((row) => !isFinished(row)));
+  }
+
+  function renderMiniSection(title, rows, emptyText, actionHtml = '') {
+    const orderedRows = sortByBeijing(rows);
+    return `
+      <section class="panel section-compact">
+        <div class="section-head">
+          <h2>${htmlEscape(title)}</h2>
+          <div class="section-actions">
+            <span class="muted">${orderedRows.length} 场</span>
+            ${actionHtml}
+          </div>
+        </div>
+        <div class="grid cards-3">
+          ${orderedRows.length ? orderedRows.map((row) => renderMatchCard(row, true)).join('') : `<div class="empty">${htmlEscape(emptyText)}</div>`}
+        </div>
+      </section>
+    `;
+  }
+
   function renderHome() {
     const stats = computeStats();
-    const upcoming = [...state.matches]
-      .sort((a, b) => sortOrder(a) - sortOrder(b))
-      .slice(0, 12);
+    const futures = futureMatches();
+    const todayPack = matchesForTodayOrNearest();
+    const todayRows = todayPack.rows.slice(0, 6);
+    const highConfidence = sortByBeijing(rankMatches(futures).filter((row) => confidenceNumber(row) >= 55).slice(0, 6));
+    const upsetAlerts = sortByBeijing([...futures].sort((a, b) => riskNumber(b) - riskNumber(a)).filter((row) => riskNumber(row) >= 60).slice(0, 6));
+    const mainList = sortByBeijing((todayRows.length ? todayRows : futures).slice(0, 12));
+    const todayTitle = todayPack.actualToday ? '今日比赛' : '今日暂无比赛 · 最近赛程';
+    const todayNote = todayPack.actualToday ? '按北京时间筛选今日比赛，点击可进入完整今日推荐。' : `${todayPack.label}，今日暂无比赛，已显示最近比赛。`;
+    const goTodayButton = '<button class="btn mini" type="button" data-jump-tab="today">查看今日比赛推荐</button>';
+
     views.home.innerHTML = `
       <section class="panel">
         <h2>核心概览</h2>
         ${renderMetrics(stats)}
       </section>
 
-      <section class="panel">
-        <h2>比赛预测</h2>
+      <section class="panel today-entry">
+        <div class="section-head">
+          <div>
+            <h2>${htmlEscape(todayTitle)}</h2>
+            <p class="muted">${htmlEscape(todayNote)}</p>
+          </div>
+          ${goTodayButton}
+        </div>
         <div class="grid cards-3">
-          ${upcoming.length ? upcoming.map((row) => renderMatchCard(row, true)).join('') : '<div class="empty">暂无比赛数据。请检查 Supabase 配置或稍后刷新。</div>'}
+          ${todayRows.length ? todayRows.slice(0, 3).map((row) => renderMatchCard(row, true)).join('') : '<div class="empty">暂无今日比赛。</div>'}
         </div>
       </section>
 
+      ${renderMiniSection('高置信推荐', highConfidence, '暂无达到高置信阈值的比赛。')}
+      ${renderMiniSection('爆冷预警', upsetAlerts, '暂无高风险爆冷预警。')}
+
       <section class="panel">
+        <h2>比赛预测</h2>
+        <div class="grid cards-3">
+          ${mainList.length ? mainList.map((row) => renderMatchCard(row, true)).join('') : '<div class="empty">暂无比赛数据。请检查 Supabase 配置或稍后刷新。</div>'}
+        </div>
+      </section>
+
+      <section class="panel data-layer-home">
         <h2>V10 数据层状态</h2>
         <p class="muted">该板块已放到首页下方，避免抢占主内容。它只做诊断展示，不做人工编辑。</p>
         ${renderDataDiagnostics(false)}
@@ -563,9 +806,56 @@
     `;
   }
 
+  function renderTodayView() {
+    const todayPack = matchesForTodayOrNearest();
+    const rows = sortByBeijing(todayPack.rows);
+    const stats = computeStats(rows);
+    const highConfidence = sortByBeijing(rankMatches(rows).slice(0, 6));
+    const upsetAlerts = sortByBeijing([...rows].sort((a, b) => riskNumber(b) - riskNumber(a)).filter((row) => riskNumber(row) >= 50));
+    const title = todayPack.actualToday ? '今日比赛推荐' : `今日暂无比赛 · ${todayPack.label}`;
+    const note = todayPack.actualToday
+      ? '按北京时间自动筛选今天的比赛，全部按开赛时间排序。'
+      : '当前北京时间今天没有匹配赛程，自动显示最近一个比赛日。';
+
+    views.today.innerHTML = `
+      <section class="panel">
+        <div class="section-head">
+          <div>
+            <h2>${htmlEscape(title)}</h2>
+            <p class="muted">${htmlEscape(note)}</p>
+          </div>
+          <button class="btn mini" type="button" data-jump-tab="schedule" data-apply-date="${htmlEscape(todayPack.key)}">去全部赛程查看</button>
+        </div>
+        ${renderMetrics(stats)}
+      </section>
+
+      ${renderMiniSection('今日高置信推荐', highConfidence, '暂无今日高置信推荐。')}
+      ${renderMiniSection('今日爆冷/防冷提醒', upsetAlerts, '暂无今日高风险防冷提醒。')}
+
+      <section class="panel">
+        <div class="section-head">
+          <h2>今日全部比赛</h2>
+          <span class="muted">${rows.length} 场 · 北京时间排序</span>
+        </div>
+        <div class="grid cards-2">
+          ${rows.length ? rows.map((row) => renderMatchCard(row, false)).join('') : '<div class="empty">暂无今日比赛。</div>'}
+        </div>
+      </section>
+    `;
+  }
+
   function dateOptions() {
-    const keys = Array.from(new Set(state.matches.map(dateKey))).sort();
-    return keys.map((key) => `<option value="${htmlEscape(key)}">${key === 'unknown' ? '时间待定' : htmlEscape(key)}</option>`).join('');
+    const keys = Array.from(new Set(state.matches.map(dateKey))).sort((a, b) => {
+      if (a === 'unknown') return 1;
+      if (b === 'unknown') return -1;
+      return a.localeCompare(b);
+    });
+    return keys.map((key) => `<option value="${htmlEscape(key)}">${htmlEscape(dateLabel(key))}</option>`).join('');
+  }
+
+  function groupOptions() {
+    const groups = Array.from(new Set(state.matches.map(groupKey))).filter(Boolean).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+    return groups.map((group) => `<option value="${htmlEscape(group)}">${htmlEscape(group)}</option>`).join('');
   }
 
   function renderScheduleList() {
@@ -581,8 +871,8 @@
     views.schedule.innerHTML = `
       <section class="panel filter-panel">
         <h2>全部赛程</h2>
-        <div class="filters">
-          <input id="searchInput" class="input" type="search" placeholder="搜索球队、阶段、状态，例如：美国 / 小组赛 / 赛后" value="${htmlEscape(state.search)}" autocomplete="off" />
+        <div class="filters filters-4">
+          <input id="searchInput" class="input" type="search" placeholder="搜索球队、阶段、状态，例如：美国 / 小组赛 / 完赛" value="${htmlEscape(state.search)}" autocomplete="off" />
           <select id="dateSelect" class="select" aria-label="日期筛选">
             <option value="all">全部日期</option>
             ${dateOptions()}
@@ -591,7 +881,11 @@
             <option value="all">全部状态</option>
             <option value="upcoming">未开赛</option>
             <option value="live">进行中</option>
-            <option value="finished">赛后</option>
+            <option value="finished">完赛</option>
+          </select>
+          <select id="groupSelect" class="select" aria-label="分组筛选">
+            <option value="all">全部分组</option>
+            ${groupOptions()}
           </select>
         </div>
       </section>
@@ -603,9 +897,11 @@
     const searchInput = $('#searchInput');
     const dateSelect = $('#dateSelect');
     const statusSelect = $('#statusSelect');
+    const groupSelect = $('#groupSelect');
 
     dateSelect.value = state.date;
     statusSelect.value = state.status;
+    groupSelect.value = state.group;
 
     let isComposing = false;
 
@@ -634,6 +930,11 @@
       renderScheduleList();
     });
 
+    groupSelect.addEventListener('change', (event) => {
+      state.group = event.target.value;
+      renderScheduleList();
+    });
+
     renderScheduleList();
   }
 
@@ -641,7 +942,7 @@
     const stats = computeStats();
     views.stats.innerHTML = `
       <section class="panel">
-        <h2>赛后命中统计</h2>
+        <h2>完赛命中统计</h2>
         <p class="muted">统计使用统一 scoreResolver：postMatchResult.actualScore → actualScore → finalScore → homeScore/awayScore。</p>
         ${renderMetrics(stats)}
       </section>
@@ -665,7 +966,7 @@
       const dHit = directionHit(row);
       return `
         <tr>
-          <td>#${htmlEscape(getMatchId(row) || '-')}</td>
+          <td>${htmlEscape(formatDateTime(getKickoff(row)))}</td>
           <td>${htmlEscape(teamName(row, 'home'))} vs ${htmlEscape(teamName(row, 'away'))}</td>
           <td>${htmlEscape(actual?.finalScore || '-')}</td>
           <td>${scores.length ? scores.map(htmlEscape).join(' / ') : '-'}</td>
@@ -683,7 +984,7 @@
         <div class="table-shell">
           <table>
             <thead>
-              <tr><th>ID</th><th>比赛</th><th>赛后比分</th><th>预测比分</th><th>比分命中</th><th>方向命中</th><th>推荐方向</th></tr>
+              <tr><th>北京时间</th><th>比赛</th><th>赛后比分</th><th>预测比分</th><th>比分命中</th><th>方向命中</th><th>推荐方向</th></tr>
             </thead>
             <tbody>${rowsHtml || '<tr><td colspan="7" class="empty">暂无可回测比赛。</td></tr>'}</tbody>
           </table>
@@ -751,6 +1052,7 @@
 
   function renderAll() {
     renderHome();
+    renderTodayView();
     renderSchedule();
     renderStats();
     renderBacktest();
@@ -806,7 +1108,7 @@
   async function fetchRemoteMatches() {
     if (!isConfigured()) throw new Error('未配置 Supabase URL / anon key');
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), CONFIG.REQUEST_TIMEOUT_MS || 4000);
+    const timeout = window.setTimeout(() => controller.abort(), CONFIG.REQUEST_TIMEOUT_MS || 10000);
     try {
       const response = await fetch(buildSupabaseUrl(), {
         method: 'GET',
@@ -887,6 +1189,16 @@
   function bindEvents() {
     $$('.tab').forEach((button) => {
       button.addEventListener('click', () => setActiveTab(button.dataset.tab));
+    });
+    document.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-jump-tab]');
+      if (!button) return;
+      const targetTab = button.dataset.jumpTab;
+      const applyDate = button.dataset.applyDate;
+      if (applyDate) state.date = applyDate;
+      setActiveTab(targetTab);
+      if (targetTab === 'schedule') renderSchedule();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     });
     $('#refreshBtn').addEventListener('click', () => loadMatches({ force: true }));
     $('#clearCacheBtn').addEventListener('click', clearCache);
